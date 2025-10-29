@@ -1,0 +1,5 @@
+{
+  "name": "GotAMilk2",
+  "description": "A collaborative shopping list and expense tracking app with real-time synchronization and AI-powered smart sorting. Users can create shared lists, claim items to avoid duplicate purchases, and organize their shopping with contextual grouping provided by Gemini. The app also features a voice command interface for hands-free operation.",
+  "requestFramePermissions": []
+}
