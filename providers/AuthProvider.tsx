@@ -6,6 +6,7 @@ interface AuthContextValue {
   session: Session | null;
   user: User | null;
   signInWithProvider: (provider: 'google' | 'github') => Promise<void>;
+  signInWithEmail: (email: string) => Promise<void>;
   signOut: () => Promise<void>;
 }
 
@@ -41,6 +42,22 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
         return;
       }
       await supabase!.auth.signInWithOAuth({ provider });
+    },
+    async signInWithEmail(email: string) {
+      if (!hasSupabase) {
+        // eslint-disable-next-line no-alert
+        alert('Supabase не настроен. Добавьте VITE_SUPABASE_URL и VITE_SUPABASE_ANON_KEY в .env.local');
+        return;
+      }
+      const redirectTo = typeof window !== 'undefined' ? `${window.location.origin}` : undefined;
+      const { error } = await supabase!.auth.signInWithOtp({ email, options: { emailRedirectTo: redirectTo } });
+      if (error) {
+        // eslint-disable-next-line no-alert
+        alert(`Не удалось отправить ссылку для входа: ${error.message}`);
+      } else {
+        // eslint-disable-next-line no-alert
+        alert('Мы отправили ссылку для входа на вашу почту. Проверьте inbox.');
+      }
     },
     async signOut() {
       if (!hasSupabase) return;

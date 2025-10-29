@@ -2,13 +2,15 @@
 import React from 'react';
 import { ShoppingBasket, Share2 } from 'lucide-react';
 import { useAuth } from '../providers/AuthProvider';
+import AuthModal from './AuthModal';
 
 interface HeaderProps {
   onShareClick: () => void;
 }
 
 const Header: React.FC<HeaderProps> = ({ onShareClick }) => {
-  const { user, signInWithProvider, signOut } = useAuth();
+  const { user, signOut } = useAuth();
+  const [isAuthOpen, setIsAuthOpen] = React.useState(false);
   return (
     <header className="bg-white dark:bg-gray-800 shadow-md sticky top-0 z-10">
       <div className="container mx-auto px-4 sm:px-6 lg:px-8">
@@ -51,10 +53,10 @@ const Header: React.FC<HeaderProps> = ({ onShareClick }) => {
             ) : (
               <div className="flex items-center space-x-2">
                 <button
-                  onClick={() => signInWithProvider('google')}
+                  onClick={() => setIsAuthOpen(true)}
                   className="px-3 py-2 rounded-lg text-sm font-medium transition-colors bg-indigo-600 text-white hover:bg-indigo-700"
                 >
-                  Sign In (Google)
+                  Sign In
                 </button>
               </div>
             )}
@@ -62,7 +64,9 @@ const Header: React.FC<HeaderProps> = ({ onShareClick }) => {
         </div>
       </div>
     </header>
+    <AuthModal isOpen={isAuthOpen} onClose={() => setIsAuthOpen(false)} />
   );
 };
+
 
 export default Header;
