@@ -13,35 +13,40 @@ const AuthContext = createContext<AuthContextValue | undefined>(undefined);
 
 export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children }) => {
   const [session, setSession] = useState<Session | null>(null);
+  const hasSupabase = Boolean(supabase);
 
   useEffect(() => {
+    if (!hasSupabase) return;
     let isMounted = true;
-
-    supabase.auth.getSession().then(({ data }) => {
+    supabase!.auth.getSession().then(({ data }) => {
       if (!isMounted) return;
       setSession(data.session ?? null);
     });
-
-    const { data: sub } = supabase.auth.onAuthStateChange((_event, newSession) => {
+    const { data: sub } = supabase!.auth.onAuthStateChange((_event, newSession) => {
       setSession(newSession ?? null);
     });
-
     return () => {
       isMounted = false;
       sub.subscription.unsubscribe();
     };
-  }, []);
+  }, [hasSupabase]);
 
   const value = useMemo<AuthContextValue>(() => ({
     session,
     user: session?.user ?? null,
     async signInWithProvider(provider) {
-      await supabase.auth.signInWithOAuth({ provider });
+      if (!hasSupabase) {
+        // eslint-disable-next-line no-alert
+        alert('Supabase не настроен. Добавьте VITE_SUPABASE_URL и VITE_SUPABASE_ANON_KEY в .env.local');
+        return;
+      }
+      await supabase!.auth.signInWithOAuth({ provider });
     },
     async signOut() {
-      await supabase.auth.signOut();
+      if (!hasSupabase) return;
+      await supabase!.auth.signOut();
     },
-  }), [session]);
+  }), [session, hasSupabase]);
 
   return (
     <AuthContext.Provider value={value}>{children}</AuthContext.Provider>
