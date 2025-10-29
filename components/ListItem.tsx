@@ -2,10 +2,11 @@ import React, { useState, useRef, useEffect } from 'react';
 import type { ListItem } from '../types';
 import { ItemStatus, Priority } from '../types';
 import { useShoppingList } from '../hooks/useShoppingList';
-import { CURRENT_USER, USERS } from '../constants';
+import { USERS } from '../constants';
 import { GripVertical, User as UserIcon, X, Check, Flame, Trash2, Minus, Plus } from 'lucide-react';
 import { useSortable } from '@dnd-kit/sortable';
 import { CSS } from '@dnd-kit/utilities';
+import { useAuth } from '../providers/AuthProvider';
 
 const priorityMap = {
   [Priority.High]: { icon: <Flame className="h-4 w-4 text-red-500" />, text: 'High', color: 'text-red-500' },
@@ -17,7 +18,8 @@ const priorityMap = {
 const UNITS = ['pcs', 'L', 'kg', 'g', 'loaf', 'bottle', 'box', 'jar', 'unit'];
 
 const ListItemComponent: React.FC<{ item: ListItem }> = ({ item }) => {
-  const { dispatch, expandedItemId, setExpandedItemId } = useShoppingList();
+  const { dispatch, expandedItemId, setExpandedItemId, syncUpdateItem, syncRemoveItem } = useShoppingList();
+  const { user } = useAuth();
   const { attributes, listeners, setNodeRef, transform, transition, isDragging } = useSortable({ id: item.id });
 
   const isExpanded = expandedItemId === item.id;
@@ -40,25 +42,42 @@ const ListItemComponent: React.FC<{ item: ListItem }> = ({ item }) => {
   };
 
   const isPurchased = item.status === ItemStatus.Purchased;
-  const isAssignedToCurrentUser = item.assignee?.id === CURRENT_USER.id;
+  const currentUserAssignee = user
+    ? {
+        id: user.id,
+        name: user.user_metadata?.full_name || user.email || 'You',
+        avatar: user.user_metadata?.avatar_url || '',
+      }
+    : undefined;
+  const isAssignedToCurrentUser = item.assignee?.id && user ? item.assignee.id === user.id : false;
   const isAssigned = !!item.assignee;
 
   const handleClaim = (e: React.MouseEvent) => {
     e.stopPropagation();
+    if (!user) return;
     if (isAssignedToCurrentUser) {
-      dispatch({ type: 'CLEAR_ASSIGNEE', payload: { id: item.id } });
-    } else if (!isAssigned) {
-      dispatch({ type: 'SET_ASSIGNEE', payload: { id: item.id } });
+      syncUpdateItem(item.id, { assignee: undefined, status: ItemStatus.Open });
+      dispatch({ type: 'UPDATE_ITEM', payload: { id: item.id, assignee: undefined, status: ItemStatus.Open } });
+    } else if (!isAssigned && currentUserAssignee) {
+      syncUpdateItem(item.id, { assignee: currentUserAssignee, status: ItemStatus.Intention });
+      dispatch({ type: 'UPDATE_ITEM', payload: { id: item.id, assignee: currentUserAssignee, status: ItemStatus.Intention } });
     }
   };
 
   const handlePurchaseToggle = (e: React.MouseEvent) => {
     e.stopPropagation();
-    dispatch({ type: 'TOGGLE_PURCHASE', payload: { id: item.id } });
+    const isPurchased = item.status === ItemStatus.Purchased;
+    const newStatus = isPurchased ? ItemStatus.Open : ItemStatus.Purchased;
+    const newAssignee = isPurchased
+      ? undefined
+      : item.assignee || currentUserAssignee;
+    syncUpdateItem(item.id, { status: newStatus, assignee: newAssignee });
+    dispatch({ type: 'UPDATE_ITEM', payload: { id: item.id, status: newStatus, assignee: newAssignee } });
   };
 
   const handleDelete = (e: React.MouseEvent) => {
     e.stopPropagation();
+    syncRemoveItem(item.id);
     dispatch({ type: 'REMOVE_ITEM', payload: { id: item.id } });
   };
 
@@ -72,12 +91,14 @@ const ListItemComponent: React.FC<{ item: ListItem }> = ({ item }) => {
 
   const handlePriorityClick = (p: Priority) => {
     const newPriority = item.priority === p ? Priority.None : p;
+    syncUpdateItem(item.id, { priority: newPriority });
     dispatch({ type: 'UPDATE_ITEM', payload: { id: item.id, priority: newPriority } });
   };
 
   const handleQuantityChange = (amount: number) => {
     const newQuantity = item.quantity + amount;
     if (newQuantity >= 1) {
+      syncUpdateItem(item.id, { quantity: newQuantity });
       dispatch({ type: 'UPDATE_ITEM', payload: { id: item.id, quantity: newQuantity } });
     }
   };
@@ -85,6 +106,7 @@ const ListItemComponent: React.FC<{ item: ListItem }> = ({ item }) => {
   const handleQuantitySave = () => {
     const newQuantity = parseInt(editableQuantity, 10);
     if (!isNaN(newQuantity) && newQuantity >= 1 && newQuantity !== item.quantity) {
+      syncUpdateItem(item.id, { quantity: newQuantity });
       dispatch({ type: 'UPDATE_ITEM', payload: { id: item.id, quantity: newQuantity } });
     }
     setIsEditingQuantity(false);
@@ -101,6 +123,7 @@ const ListItemComponent: React.FC<{ item: ListItem }> = ({ item }) => {
   };
 
   const handleUnitChange = (e: React.ChangeEvent<HTMLSelectElement>) => {
+    syncUpdateItem(item.id, { unit: e.target.value });
     dispatch({ type: 'UPDATE_ITEM', payload: { id: item.id, unit: e.target.value } });
   };
 
@@ -115,6 +138,14 @@ const ListItemComponent: React.FC<{ item: ListItem }> = ({ item }) => {
         status: newAssignee ? ItemStatus.Intention : ItemStatus.Open,
       },
     });
+    if (newAssignee && newAssignee.id.includes('-')) {
+      syncUpdateItem(item.id, {
+        assignee: newAssignee,
+        status: ItemStatus.Intention,
+      });
+    } else if (!newAssignee) {
+      syncUpdateItem(item.id, { assignee: undefined, status: ItemStatus.Open });
+    }
   };
 
   return (
@@ -148,7 +179,7 @@ const ListItemComponent: React.FC<{ item: ListItem }> = ({ item }) => {
           {item.assignee && (
             <div className="flex items-center space-x-1 bg-gray-200 dark:bg-gray-600 px-2 py-1 rounded-full text-xs font-medium text-gray-700 dark:text-gray-200">
               <img src={item.assignee.avatar} alt={item.assignee.name} className="w-4 h-4 rounded-full" />
-              <span>{item.assignee.id === CURRENT_USER.id ? 'You' : item.assignee.name.split(' ')[0]}</span>
+              <span>{user && item.assignee.id === user.id ? 'You' : item.assignee.name.split(' ')[0]}</span>
             </div>
           )}
 
