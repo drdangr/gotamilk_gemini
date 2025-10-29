@@ -6,7 +6,7 @@ import { INITIAL_ITEMS, CURRENT_USER, INITIAL_PRODUCT_CATALOG, INITIAL_ALIASES }
 import { getSmartSortedList, parseUserCommand } from '../services/geminiService';
 import { useAuth } from '../providers/AuthProvider';
 import { getOrCreateDefaultList } from '../services/lists';
-import { fetchListItems, insertListItem, updateListItem as updateListItemRemote, deleteListItem as deleteListItemRemote } from '../services/listItems';
+import { fetchListItems, insertListItem, updateListItem as updateListItemRemote, deleteListItem as deleteListItemRemote, subscribeToListItems } from '../services/listItems';
 
 type Action =
   | { type: 'ADD_ITEM'; payload: ListItem }
@@ -245,6 +245,28 @@ export const ShoppingListProvider: React.FC<{ children: ReactNode }> = ({ childr
     init();
     return () => { cancelled = true; };
   }, [user?.id]);
+
+  // Realtime updates per active list
+  useEffect(() => {
+    if (!activeListId) return;
+    const unsubscribe = subscribeToListItems(activeListId, {
+      onInsert: (item) => {
+        // dedupe by id
+        if (!state.items.some((i) => i.id === item.id)) {
+          dispatch({ type: 'ADD_ITEM', payload: item });
+        }
+      },
+      onUpdate: (item) => {
+        dispatch({ type: 'UPDATE_ITEM', payload: { id: item.id, ...item } });
+      },
+      onDelete: (id) => {
+        dispatch({ type: 'REMOVE_ITEM', payload: { id } });
+      },
+    });
+    return () => unsubscribe();
+    // Intentionally depend only on activeListId
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [activeListId]);
 
   const processTextCommand = useCallback(async (text: string) => {
     dispatch({ type: 'SET_LOADING', payload: { loading: true } });

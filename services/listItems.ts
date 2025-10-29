@@ -76,7 +76,7 @@ export async function deleteListItem(listId: string, id: string): Promise<boolea
   return true;
 }
 
-function mapRowToListItem(row: any): ListItem {
+export function mapRowToListItem(row: any): ListItem {
   return {
     id: row.id,
     name: row.name,
@@ -85,6 +85,46 @@ function mapRowToListItem(row: any): ListItem {
     priority: Number(row.priority ?? 0) as Priority,
     status: row.status,
     assignee: row.assignee_user_id ? { id: row.assignee_user_id, name: '', avatar: '' } : undefined,
+  };
+}
+
+export function subscribeToListItems(
+  listId: string,
+  handlers: {
+    onInsert?: (item: ListItem) => void;
+    onUpdate?: (item: ListItem) => void;
+    onDelete?: (id: string) => void;
+  }
+): () => void {
+  if (!supabase) return () => {};
+  const channel = supabase.channel(`list_items:${listId}`);
+
+  channel
+    .on(
+      'postgres_changes',
+      { event: 'INSERT', schema: 'public', table: 'list_items', filter: `list_id=eq.${listId}` },
+      (payload) => {
+        if (handlers.onInsert) handlers.onInsert(mapRowToListItem(payload.new));
+      }
+    )
+    .on(
+      'postgres_changes',
+      { event: 'UPDATE', schema: 'public', table: 'list_items', filter: `list_id=eq.${listId}` },
+      (payload) => {
+        if (handlers.onUpdate) handlers.onUpdate(mapRowToListItem(payload.new));
+      }
+    )
+    .on(
+      'postgres_changes',
+      { event: 'DELETE', schema: 'public', table: 'list_items', filter: `list_id=eq.${listId}` },
+      (payload) => {
+        if (handlers.onDelete) handlers.onDelete(payload.old.id);
+      }
+    )
+    .subscribe();
+
+  return () => {
+    try { supabase.removeChannel(channel); } catch {}
   };
 }
 
