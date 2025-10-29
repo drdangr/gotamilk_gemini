@@ -1,6 +1,7 @@
 import React, { createContext, useContext, useEffect, useMemo, useState } from 'react';
 import type { Session, User } from '@supabase/supabase-js';
 import { supabase } from '../services/supabaseClient';
+import { ensureProfile } from '../services/profile';
 
 interface AuthContextValue {
   session: Session | null;
@@ -31,6 +32,11 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
       sub.subscription.unsubscribe();
     };
   }, [hasSupabase]);
+
+  useEffect(() => {
+    if (!session?.user) return;
+    ensureProfile(session.user).catch(() => {});
+  }, [session?.user]);
 
   const value = useMemo<AuthContextValue>(() => ({
     session,

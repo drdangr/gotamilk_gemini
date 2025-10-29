@@ -1,9 +1,12 @@
-import React, { createContext, useContext, useReducer, ReactNode, useCallback } from 'react';
+import React, { createContext, useContext, useReducer, ReactNode, useCallback, useEffect, useState } from 'react';
 // FIX: SortType is an enum used as a value, so it can't be a type-only import.
 import type { ListItem, SmartSortResult, Product, Alias, ConfirmationRequest } from '../types';
 import { ItemStatus, Priority, SortType } from '../types';
 import { INITIAL_ITEMS, CURRENT_USER, INITIAL_PRODUCT_CATALOG, INITIAL_ALIASES } from '../constants';
 import { getSmartSortedList, parseUserCommand } from '../services/geminiService';
+import { useAuth } from '../providers/AuthProvider';
+import { getOrCreateDefaultList } from '../services/lists';
+import { fetchListItems, insertListItem, updateListItem as updateListItemRemote, deleteListItem as deleteListItemRemote } from '../services/listItems';
 
 type Action =
   | { type: 'ADD_ITEM'; payload: ListItem }
@@ -38,7 +41,7 @@ interface State {
 }
 
 const initialState: State = {
-  items: INITIAL_ITEMS,
+  items: [],
   productCatalog: INITIAL_PRODUCT_CATALOG,
   aliases: INITIAL_ALIASES,
   sortType: SortType.None,
@@ -222,6 +225,26 @@ const ShoppingListContext = createContext<ShoppingListContextType | undefined>(u
 
 export const ShoppingListProvider: React.FC<{ children: ReactNode }> = ({ children }) => {
   const [state, dispatch] = useReducer(shoppingListReducer, initialState);
+  const { user } = useAuth();
+  const [activeListId, setActiveListId] = useState<string | null>(null);
+
+  useEffect(() => {
+    let cancelled = false;
+    async function init() {
+      if (!user) return;
+      dispatch({ type: 'SET_LOADING', payload: { loading: true } });
+      const list = await getOrCreateDefaultList(user.id);
+      if (!list) return;
+      if (cancelled) return;
+      setActiveListId(list.id);
+      const remoteItems = await fetchListItems(list.id);
+      if (cancelled) return;
+      dispatch({ type: 'SET_ITEMS', payload: remoteItems });
+      dispatch({ type: 'SET_LOADING', payload: { loading: false } });
+    }
+    init();
+    return () => { cancelled = true; };
+  }, [user?.id]);
 
   const processTextCommand = useCallback(async (text: string) => {
     dispatch({ type: 'SET_LOADING', payload: { loading: true } });
@@ -229,19 +252,27 @@ export const ShoppingListProvider: React.FC<{ children: ReactNode }> = ({ childr
       const command = await parseUserCommand(text, state.items);
 
       if (command.intent === 'ADD' && command.items) {
-        command.items.forEach((parsedItem, index) => {
-           if (parsedItem && parsedItem.itemName) {
-            const newItem: ListItem = {
-              id: `${new Date().toISOString()}-${index}`,
+        for (let index = 0; index < command.items.length; index++) {
+          const parsedItem = command.items[index];
+          if (parsedItem && parsedItem.itemName) {
+            const newPartial: Omit<ListItem, 'id'> = {
               name: parsedItem.itemName,
               quantity: parsedItem.quantity || 1,
               unit: parsedItem.unit || 'pcs',
-              priority: (parsedItem.priority ? Priority[parsedItem.priority as keyof typeof Priority] : Priority.None) as Priority,
+              priority: (parsedItem.priority ? (Priority as any)[parsedItem.priority as any] : Priority.None) as Priority,
               status: ItemStatus.Open,
             };
-            dispatch({ type: 'ADD_ITEM', payload: newItem });
+            if (activeListId) {
+              const created = await insertListItem(activeListId, newPartial);
+              if (created) {
+                dispatch({ type: 'ADD_ITEM', payload: created });
+              }
+            } else {
+              const localItem: ListItem = { id: `${new Date().toISOString()}-${index}`, ...newPartial } as ListItem;
+              dispatch({ type: 'ADD_ITEM', payload: localItem });
+            }
           }
-        });
+        }
       } else if (command.intent === 'REMOVE' && command.removeCriteria?.itemNames) {
         const lowercasedNamesToRemove = command.removeCriteria.itemNames.map(name => name.toLowerCase());
         const itemsToRemove = state.items.filter(item => lowercasedNamesToRemove.includes(item.name.toLowerCase()));
@@ -258,6 +289,9 @@ export const ShoppingListProvider: React.FC<{ children: ReactNode }> = ({ childr
                 }
               });
            } else {
+              if (activeListId) {
+                await Promise.all(itemIdsToRemove.map(id => deleteListItemRemote(activeListId, id)));
+              }
               dispatch({ type: 'REMOVE_ITEMS', payload: { ids: itemIdsToRemove } });
            }
         }
@@ -285,21 +319,32 @@ export const ShoppingListProvider: React.FC<{ children: ReactNode }> = ({ childr
               }
 
               if (newQuantity <= 0) {
+                if (activeListId) {
+                  deleteListItemRemote(activeListId, existingItem.id);
+                }
                 dispatch({ type: 'REMOVE_ITEM', payload: { id: existingItem.id } });
               } else {
-                dispatch({ type: 'UPDATE_ITEM_QUANTITY', payload: { id: existingItem.id, newQuantity }});
+                if (activeListId) {
+                  updateListItemRemote(activeListId, existingItem.id, { quantity: newQuantity });
+                }
+                dispatch({ type: 'UPDATE_ITEM_QUANTITY', payload: { id: existingItem.id, newQuantity } });
               }
 
             } else if (parsedItem.itemName) { // If it doesn't exist, add it
-               const newItem: ListItem = {
-                id: new Date().toISOString(),
+               const partial: Omit<ListItem, 'id'> = {
                 name: parsedItem.itemName,
                 quantity: parsedItem.quantity || 1,
                 unit: parsedItem.unit || 'pcs',
                 priority: Priority.None,
                 status: ItemStatus.Open,
               };
-              dispatch({ type: 'ADD_ITEM', payload: newItem });
+              if (activeListId) {
+                insertListItem(activeListId, partial).then(created => {
+                  if (created) dispatch({ type: 'ADD_ITEM', payload: created });
+                });
+              } else {
+                dispatch({ type: 'ADD_ITEM', payload: { id: new Date().toISOString(), ...partial } as ListItem });
+              }
             }
          });
       }
@@ -319,7 +364,7 @@ export const ShoppingListProvider: React.FC<{ children: ReactNode }> = ({ childr
     } finally {
       dispatch({ type: 'SET_LOADING', payload: { loading: false } });
     }
-  }, [state.items]);
+  }, [state.items, activeListId]);
 
 
   const applySort = useCallback(async (sortType: SortType) => {
