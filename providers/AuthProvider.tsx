@@ -47,7 +47,9 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
         alert('Supabase не настроен. Добавьте VITE_SUPABASE_URL и VITE_SUPABASE_ANON_KEY в .env.local');
         return;
       }
-      await supabase!.auth.signInWithOAuth({ provider });
+      const publicSiteUrl = import.meta.env.VITE_PUBLIC_SITE_URL as string | undefined;
+      const redirectTo = typeof window !== 'undefined' ? `${window.location.origin}` : undefined;
+      await supabase!.auth.signInWithOAuth({ provider, options: { redirectTo: publicSiteUrl || redirectTo } });
     },
     async signInWithEmail(email: string) {
       if (!hasSupabase) {
@@ -55,8 +57,9 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
         alert('Supabase не настроен. Добавьте VITE_SUPABASE_URL и VITE_SUPABASE_ANON_KEY в .env.local');
         return;
       }
+      const publicSiteUrl = import.meta.env.VITE_PUBLIC_SITE_URL as string | undefined;
       const redirectTo = typeof window !== 'undefined' ? `${window.location.origin}` : undefined;
-      const { error } = await supabase!.auth.signInWithOtp({ email, options: { emailRedirectTo: redirectTo } });
+      const { error } = await supabase!.auth.signInWithOtp({ email, options: { emailRedirectTo: publicSiteUrl || redirectTo } });
       if (error) {
         // eslint-disable-next-line no-alert
         alert(`Не удалось отправить ссылку для входа: ${error.message}`);
