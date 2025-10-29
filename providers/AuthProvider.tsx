@@ -48,8 +48,9 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
         return;
       }
       const publicSiteUrl = import.meta.env.VITE_PUBLIC_SITE_URL as string | undefined;
-      const redirectTo = typeof window !== 'undefined' ? `${window.location.origin}` : undefined;
-      await supabase!.auth.signInWithOAuth({ provider, options: { redirectTo: publicSiteUrl || redirectTo } });
+      const currentOrigin = typeof window !== 'undefined' ? `${window.location.origin}` : undefined;
+      const redirectTo = currentOrigin || publicSiteUrl;
+      await supabase!.auth.signInWithOAuth({ provider, options: { redirectTo } });
     },
     async signInWithEmail(email: string) {
       if (!hasSupabase) {
@@ -58,8 +59,9 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
         return;
       }
       const publicSiteUrl = import.meta.env.VITE_PUBLIC_SITE_URL as string | undefined;
-      const redirectTo = typeof window !== 'undefined' ? `${window.location.origin}` : undefined;
-      const { error } = await supabase!.auth.signInWithOtp({ email, options: { emailRedirectTo: publicSiteUrl || redirectTo } });
+      const currentOrigin = typeof window !== 'undefined' ? `${window.location.origin}` : undefined;
+      const emailRedirectTo = currentOrigin || publicSiteUrl;
+      const { error } = await supabase!.auth.signInWithOtp({ email, options: { emailRedirectTo } });
       if (error) {
         // eslint-disable-next-line no-alert
         alert(`Не удалось отправить ссылку для входа: ${error.message}`);
