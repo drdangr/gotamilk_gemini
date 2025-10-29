@@ -72,16 +72,13 @@ create policy "profiles: read own" on public.profiles
 drop policy if exists "profiles: update own" on public.profiles;
 create policy "profiles: update own" on public.profiles
   for update using (auth.uid() = id) with check (auth.uid() = id);
+-- Allow insert own profile
+drop policy if exists "profiles: insert own" on public.profiles;
+create policy "profiles: insert own" on public.profiles
+  for insert with check (auth.uid() = id);
 
--- Lists: member-only read; owner/editor write
+-- Lists: select only by owner (временно — во избежание рекурсий)
 drop policy if exists "lists: select for members" on public.lists;
-create policy "lists: select for members" on public.lists
-  for select using (
-    exists (
-      select 1 from public.list_members m
-      where m.list_id = lists.id and m.user_id = auth.uid()
-    )
-  );
 -- Lists: owners can also see their lists even без membership bootstrap
 drop policy if exists "lists: select for owners" on public.lists;
 create policy "lists: select for owners" on public.lists
@@ -92,38 +89,28 @@ create policy "lists: insert by owner" on public.lists
   for insert with check (owner_id = auth.uid());
 drop policy if exists "lists: modify for owner" on public.lists;
 create policy "lists: modify for owner" on public.lists
-  for all using (
-    exists (
-      select 1 from public.list_members m
-      where m.list_id = lists.id and m.user_id = auth.uid() and m.role in ('owner')
-    )
-  ) with check (
-    exists (
-      select 1 from public.list_members m
-      where m.list_id = lists.id and m.user_id = auth.uid() and m.role in ('owner')
-    )
-  );
+  for all using (owner_id = auth.uid())
+  with check (owner_id = auth.uid());
 
--- List members: visible to members; writable by owner
-drop policy if exists "list_members: select for members" on public.list_members;
-create policy "list_members: select for members" on public.list_members
+-- List members: avoid self-recursive EXISTS;
+-- Select: see your rows or rows in lists you own
+drop policy if exists "list_members: select own/owner" on public.list_members;
+create policy "list_members: select own/owner" on public.list_members
   for select using (
-    exists (
-      select 1 from public.list_members m
-      where m.list_id = list_members.list_id and m.user_id = auth.uid()
+    user_id = auth.uid() OR exists (
+      select 1 from public.lists l where l.id = list_members.list_id and l.owner_id = auth.uid()
     )
   );
+-- Manage memberships only by list owner
 drop policy if exists "list_members: manage by owner" on public.list_members;
 create policy "list_members: manage by owner" on public.list_members
   for all using (
     exists (
-      select 1 from public.list_members m
-      where m.list_id = list_members.list_id and m.user_id = auth.uid() and m.role = 'owner'
+      select 1 from public.lists l where l.id = list_members.list_id and l.owner_id = auth.uid()
     )
   ) with check (
     exists (
-      select 1 from public.list_members m
-      where m.list_id = list_members.list_id and m.user_id = auth.uid() and m.role = 'owner'
+      select 1 from public.lists l where l.id = list_members.list_id and l.owner_id = auth.uid()
     )
   );
 -- Bootstrap: allow owner of list to insert their own membership row
@@ -175,5 +162,50 @@ end;$$ language plpgsql;
 drop trigger if exists trg_set_updated_at on public.list_items;
 create trigger trg_set_updated_at before update on public.list_items
 for each row execute function public.set_updated_at();
+
+-- 5) Helper functions to avoid recursive RLS lookups
+create or replace function public.is_list_member(p_list_id uuid)
+returns boolean
+language sql
+security definer
+set search_path = public
+as $$
+  select
+    exists (
+      select 1 from public.list_members lm
+      where lm.list_id = p_list_id and lm.user_id = auth.uid()
+    )
+    or exists (
+      select 1 from public.lists l
+      where l.id = p_list_id and l.owner_id = auth.uid()
+    );
+$$;
+
+create or replace function public.can_edit_list(p_list_id uuid)
+returns boolean
+language sql
+security definer
+set search_path = public
+as $$
+  select
+    exists (
+      select 1 from public.lists l
+      where l.id = p_list_id and l.owner_id = auth.uid()
+    )
+    or exists (
+      select 1 from public.list_members lm
+      where lm.list_id = p_list_id and lm.user_id = auth.uid() and lm.role in ('owner','editor')
+    );
+$$;
+
+-- Recreate list_items policies using helper functions
+drop policy if exists "list_items: select for members" on public.list_items;
+create policy "list_items: select for members" on public.list_items
+  for select using (public.is_list_member(list_id));
+
+drop policy if exists "list_items: modify for editors" on public.list_items;
+create policy "list_items: modify for editors" on public.list_items
+  for all using (public.can_edit_list(list_id))
+  with check (public.can_edit_list(list_id));
 
 
