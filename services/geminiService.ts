@@ -2,11 +2,14 @@ import { GoogleGenAI, Type } from "@google/genai";
 import type { ListItem, SmartSortResult, SortType } from '../types';
 import { ItemStatus } from '../types';
 
-if (!process.env.API_KEY) {
-  throw new Error("API_KEY environment variable not set");
+const apiKey = import.meta.env.VITE_GEMINI_API_KEY as string | undefined;
+if (!apiKey) {
+  if (import.meta.env.DEV) {
+    throw new Error("VITE_GEMINI_API_KEY environment variable not set");
+  }
 }
 
-const ai = new GoogleGenAI({ apiKey: process.env.API_KEY });
+const ai = new GoogleGenAI({ apiKey: apiKey || '' });
 
 const itemSchema = {
     type: Type.OBJECT,

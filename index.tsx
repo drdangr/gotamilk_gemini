@@ -2,6 +2,7 @@ import React from 'react';
 import ReactDOM from 'react-dom/client';
 import App from './App';
 import { ShoppingListProvider } from './hooks/useShoppingList';
+import { AuthProvider } from './providers/AuthProvider';
 
 const rootElement = document.getElementById('root');
 if (!rootElement) {
@@ -11,8 +12,10 @@ if (!rootElement) {
 const root = ReactDOM.createRoot(rootElement);
 root.render(
   <React.StrictMode>
-    <ShoppingListProvider>
-      <App />
-    </ShoppingListProvider>
+    <AuthProvider>
+      <ShoppingListProvider>
+        <App />
+      </ShoppingListProvider>
+    </AuthProvider>
   </React.StrictMode>
 );
