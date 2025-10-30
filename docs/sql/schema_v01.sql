@@ -89,6 +89,16 @@ create policy "profiles: update own" on public.profiles
 drop policy if exists "profiles: insert own" on public.profiles;
 create policy "profiles: insert own" on public.profiles
   for insert with check (auth.uid() = id);
+-- Allow reading profiles of users who share lists with you
+drop policy if exists "profiles: read shared list members" on public.profiles;
+create policy "profiles: read shared list members" on public.profiles
+  for select using (
+    exists (
+      select 1 from public.list_members lm1
+      inner join public.list_members lm2 on lm1.list_id = lm2.list_id
+      where lm1.user_id = auth.uid() and lm2.user_id = profiles.id
+    )
+  );
 
 -- Lists: select only by owner (временно — во избежание рекурсий)
 drop policy if exists "lists: select for members" on public.lists;

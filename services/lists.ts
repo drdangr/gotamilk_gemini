@@ -182,21 +182,30 @@ export async function fetchListMembers(listId: string): Promise<ListMember[]> {
     return [];
   }
 
-  return (data as RawMemberRow[] | null)?.map((row) => {
+  const members = (data as RawMemberRow[] | null)?.map((row) => {
     const profile = (row as any).profile as {
       id: string;
       name: string | null;
       avatar_url: string | null;
       short_name: string | null;
     } | null;
+    const memberName = profile?.short_name || profile?.name || 'Member';
+    console.log('Member profile loaded:', { 
+      user_id: row.user_id, 
+      name: profile?.name, 
+      short_name: profile?.short_name,
+      result_name: memberName 
+    });
     return {
       id: row.user_id,
       role: row.role,
-      name: profile?.short_name || profile?.name || 'Member',
+      name: memberName,
       avatar: profile?.avatar_url ?? undefined,
       email: null,
     } satisfies ListMember;
   }) ?? [];
+  
+  return members;
 }
 
 export function subscribeToListMembers(
