@@ -67,7 +67,7 @@ export async function fetchUserLists(userId: string): Promise<ListSummary[]> {
   if (!supabase) return [];
   const { data, error } = await supabase
     .from('list_members')
-    .select('list_id, role, created_at, lists!inner(id, name, owner_id, created_at, access_code, profiles!inner(id, name, avatar_url))')
+    .select('list_id, role, created_at, lists!inner(id, name, owner_id, created_at, access_code, profiles(id, name, avatar_url))')
     .eq('user_id', userId)
     .order('created_at', { ascending: true });
 
@@ -218,7 +218,7 @@ export async function joinListByAccessCode(code: string, userId: string): Promis
 
   const { data: listData, error: listError } = await supabase
     .from('lists')
-    .select('id, name, owner_id, created_at, access_code, profiles!inner(id, name, avatar_url)')
+    .select('id, name, owner_id, created_at, access_code, profiles(id, name, avatar_url)')
     .eq('access_code', normalized)
     .single();
 

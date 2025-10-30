@@ -608,6 +608,11 @@ export const ShoppingListProvider: React.FC<{ children: ReactNode }> = ({ childr
       try {
         const newList = await createListForUser(user.id, trimmed);
         if (!newList) return null;
+        setLists((prev) => {
+          const exists = prev.some((list) => list.id === newList.id);
+          if (exists) return prev;
+          return [newList, ...prev];
+        });
         setActiveListId(newList.id);
         const updated = await refreshLists();
         const target = updated.find((list) => list.id === newList.id) ?? newList;
