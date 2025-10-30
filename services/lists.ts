@@ -284,3 +284,32 @@ export async function joinListByAccessCode(code: string, userId: string): Promis
     owner: null,
   } satisfies ListSummary;
 }
+
+export async function leaveList(listId: string, userId: string): Promise<boolean> {
+  if (!supabase) return false;
+  
+  // Нельзя выйти из списка, если ты владелец (нужно сначала передать права)
+  const { data: list } = await supabase
+    .from('lists')
+    .select('owner_id')
+    .eq('id', listId)
+    .single();
+  
+  if (list?.owner_id === userId) {
+    console.error('Cannot leave list you own');
+    return false;
+  }
+
+  const { error } = await supabase
+    .from('list_members')
+    .delete()
+    .eq('list_id', listId)
+    .eq('user_id', userId);
+
+  if (error) {
+    console.error('Failed to leave list', error);
+    return false;
+  }
+
+  return true;
+}

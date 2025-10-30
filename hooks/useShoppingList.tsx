@@ -18,6 +18,7 @@ import type {
 } from '../types';
 import { ItemStatus, Priority, SortType } from '../types';
 import { INITIAL_PRODUCT_CATALOG, INITIAL_ALIASES } from '../constants';
+import { fetchAllProducts, fetchAllAliases, createProduct as createProductService, createAlias as createAliasService } from '../services/products';
 import { getSmartSortedList, parseUserCommand } from '../services/geminiService';
 import { useAuth } from '../providers/AuthProvider';
 import {
@@ -29,6 +30,7 @@ import {
   subscribeToListMembers,
   type ListSummary,
   createListForUser,
+  leaveList as leaveListService,
 } from '../services/lists';
 import {
   fetchListItems,
@@ -49,6 +51,8 @@ type Action =
   | { type: 'SET_SORTED_ITEMS'; payload: { items: ListItem[]; groups: SmartSortResult } }
   | { type: 'SET_LOADING'; payload: { loading: boolean } }
   | { type: 'SET_ITEMS'; payload: ListItem[] }
+  | { type: 'SET_PRODUCTS'; payload: Product[] }
+  | { type: 'SET_ALIASES'; payload: Alias[] }
   | { type: 'UPDATE_PRODUCT'; payload: Partial<Product> & { id: string } }
   | { type: 'REMOVE_PRODUCT'; payload: { id: string } }
   | { type: 'GROUP_PRODUCTS'; payload: { productIds: string[]; aliasName: string } }
@@ -159,6 +163,10 @@ function shoppingListReducer(state: State, action: Action): State {
       return { ...state, loading: action.payload.loading };
     case 'SET_ITEMS':
       return { ...state, items: action.payload };
+    case 'SET_PRODUCTS':
+      return { ...state, productCatalog: action.payload };
+    case 'SET_ALIASES':
+      return { ...state, aliases: action.payload };
     case 'UPDATE_PRODUCT':
       return {
         ...state,
@@ -258,6 +266,7 @@ interface ShoppingListContextType extends State {
   regenerateAccessCode: () => Promise<string | null>;
   loadMembersForList: (listId: string) => Promise<ListMember[]>;
   createList: (name: string) => Promise<ListSummary | null>;
+  leaveList: (listId: string) => Promise<void>;
 }
 
 const ShoppingListContext = createContext<ShoppingListContextType | undefined>(undefined);
@@ -288,6 +297,78 @@ export const ShoppingListProvider: React.FC<{ children: ReactNode }> = ({ childr
     setLists(userLists);
     return userLists;
   }, [user?.id]);
+
+  // Автоматический выбор дефолтного списка при входе пользователя
+  useEffect(() => {
+    if (!user) {
+      setLists([]);
+      setMembersByList({});
+      setActiveListId(null);
+      return;
+    }
+
+    let isCancelled = false;
+
+    // Загружаем списки пользователя
+    refreshLists().then((loadedLists) => {
+      if (isCancelled) return;
+
+      // Если уже есть активный список и он валиден - ничего не делаем
+      if (activeListId && loadedLists.some((l) => l.id === activeListId)) {
+        return;
+      }
+
+      // Если есть загруженные списки - выбираем первый
+      if (loadedLists.length > 0) {
+        setActiveListId(loadedLists[0].id);
+      } else {
+        // Если нет списков - создаем дефолтный
+        getOrCreateDefaultList(user.id)
+          .then((defaultList) => {
+            if (isCancelled || !defaultList) return;
+            // Перезагружаем списки и выбираем созданный
+            refreshLists().then((reloadedLists) => {
+              if (isCancelled) return;
+              const target = reloadedLists.find((l) => l.id === defaultList.id) ?? defaultList;
+              if (target) {
+                setActiveListId(target.id);
+              }
+            });
+          })
+          .catch((error) => {
+            console.error('Failed to get or create default list', error);
+          });
+      }
+    }).catch((error) => {
+      console.error('Failed to refresh lists', error);
+    });
+
+    return () => {
+      isCancelled = true;
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [user?.id]);
+
+  // Загрузка products и aliases из БД при инициализации
+  useEffect(() => {
+    const loadProductsAndAliases = async () => {
+      try {
+        const [products, aliases] = await Promise.all([
+          fetchAllProducts(),
+          fetchAllAliases(),
+        ]);
+        if (products.length > 0) {
+          dispatch({ type: 'SET_PRODUCTS', payload: products });
+        }
+        if (aliases.length > 0) {
+          dispatch({ type: 'SET_ALIASES', payload: aliases });
+        }
+      } catch (error) {
+        console.error('Failed to load products/aliases from DB', error);
+      }
+    };
+    loadProductsAndAliases();
+  }, []);
 
   const refreshActiveList = useCallback(async (): Promise<void> => {
     if (!activeListId) return;
@@ -375,9 +456,29 @@ export const ShoppingListProvider: React.FC<{ children: ReactNode }> = ({ childr
                 status: ItemStatus.Open,
               };
               if (activeListId) {
-                const created = await insertListItem(activeListId, newPartial);
-                if (created) {
-                  dispatch({ type: 'ADD_ITEM', payload: created });
+                // Создаем временный ID для оптимистичного обновления
+                const tempId = `temp-${Date.now()}-${index}`;
+                const tempItem: ListItem = {
+                  id: tempId,
+                  ...newPartial,
+                } as ListItem;
+                // Оптимистичное добавление
+                dispatch({ type: 'ADD_ITEM', payload: tempItem });
+                
+                try {
+                  const created = await insertListItem(activeListId, newPartial);
+                  if (created) {
+                    // Заменяем временный элемент на реальный
+                    dispatch({ type: 'REMOVE_ITEM', payload: { id: tempId } });
+                    dispatch({ type: 'ADD_ITEM', payload: created });
+                  } else {
+                    // Если создание не удалось, удаляем временный элемент
+                    dispatch({ type: 'REMOVE_ITEM', payload: { id: tempId } });
+                  }
+                } catch (error) {
+                  console.error('Failed to add item', error);
+                  // Удаляем временный элемент при ошибке
+                  dispatch({ type: 'REMOVE_ITEM', payload: { id: tempId } });
                 }
               } else {
                 const localItem: ListItem = {
@@ -408,12 +509,30 @@ export const ShoppingListProvider: React.FC<{ children: ReactNode }> = ({ childr
                 },
               });
             } else {
-              if (activeListId) {
-                await Promise.all(
-                  itemIdsToRemove.map((id) => deleteListItemRemote(activeListId, id))
-                );
-              }
+              // Оптимистичное удаление
               dispatch({ type: 'REMOVE_ITEMS', payload: { ids: itemIdsToRemove } });
+              
+              if (activeListId) {
+                // Сохраняем удаляемые элементы для отката
+                const itemsToRestore = itemsToRemove;
+                try {
+                  const results = await Promise.all(
+                    itemIdsToRemove.map((id) => deleteListItemRemote(activeListId, id))
+                  );
+                  // Если хотя бы одно удаление не удалось, восстанавливаем все элементы
+                  if (results.some((success) => !success)) {
+                    itemsToRestore.forEach((item) => {
+                      dispatch({ type: 'ADD_ITEM', payload: item });
+                    });
+                  }
+                } catch (error) {
+                  console.error('Failed to remove items', error);
+                  // Восстанавливаем все элементы при ошибке
+                  itemsToRestore.forEach((item) => {
+                    dispatch({ type: 'ADD_ITEM', payload: item });
+                  });
+                }
+              }
             }
           }
         } else if (command.intent === 'UPDATE' && command.items) {
@@ -442,20 +561,46 @@ export const ShoppingListProvider: React.FC<{ children: ReactNode }> = ({ childr
               }
 
               if (newQuantity <= 0) {
-                if (activeListId) {
-                  deleteListItemRemote(activeListId, existingItem.id);
-                }
+                // Оптимистичное удаление
                 dispatch({ type: 'REMOVE_ITEM', payload: { id: existingItem.id } });
-              } else {
                 if (activeListId) {
-                  updateListItemRemote(activeListId, existingItem.id, {
-                    quantity: newQuantity,
-                  });
+                  try {
+                    const success = await deleteListItemRemote(activeListId, existingItem.id);
+                    if (!success) {
+                      dispatch({ type: 'ADD_ITEM', payload: existingItem });
+                    }
+                  } catch (error) {
+                    console.error('Failed to remove item', error);
+                    dispatch({ type: 'ADD_ITEM', payload: existingItem });
+                  }
                 }
+              } else {
+                // Оптимистичное обновление
                 dispatch({
                   type: 'UPDATE_ITEM_QUANTITY',
                   payload: { id: existingItem.id, newQuantity },
                 });
+                if (activeListId) {
+                  try {
+                    const updated = await updateListItemRemote(activeListId, existingItem.id, {
+                      quantity: newQuantity,
+                    });
+                    if (!updated) {
+                      // Откат к предыдущему количеству
+                      dispatch({
+                        type: 'UPDATE_ITEM_QUANTITY',
+                        payload: { id: existingItem.id, newQuantity: existingItem.quantity },
+                      });
+                    }
+                  } catch (error) {
+                    console.error('Failed to update item', error);
+                    // Откат к предыдущему количеству
+                    dispatch({
+                      type: 'UPDATE_ITEM_QUANTITY',
+                      payload: { id: existingItem.id, newQuantity: existingItem.quantity },
+                    });
+                  }
+                }
               }
             } else if (parsedItem.itemName) {
               const partial: Omit<ListItem, 'id'> = {
@@ -466,8 +611,24 @@ export const ShoppingListProvider: React.FC<{ children: ReactNode }> = ({ childr
                 status: ItemStatus.Open,
               };
               if (activeListId) {
+                const tempId = `temp-${Date.now()}`;
+                const tempItem: ListItem = {
+                  id: tempId,
+                  ...partial,
+                } as ListItem;
+                // Оптимистичное добавление
+                dispatch({ type: 'ADD_ITEM', payload: tempItem });
+                
                 insertListItem(activeListId, partial).then((created) => {
-                  if (created) dispatch({ type: 'ADD_ITEM', payload: created });
+                  if (created) {
+                    dispatch({ type: 'REMOVE_ITEM', payload: { id: tempId } });
+                    dispatch({ type: 'ADD_ITEM', payload: created });
+                  } else {
+                    dispatch({ type: 'REMOVE_ITEM', payload: { id: tempId } });
+                  }
+                }).catch((error) => {
+                  console.error('Failed to add item', error);
+                  dispatch({ type: 'REMOVE_ITEM', payload: { id: tempId } });
                 });
               } else {
                 dispatch({
@@ -573,13 +734,27 @@ export const ShoppingListProvider: React.FC<{ children: ReactNode }> = ({ childr
   const syncUpdateItem = useCallback(
     async (id: string, patch: Partial<ListItem>) => {
       if (!activeListId) return;
+      
+      // Сохраняем текущее состояние для отката
+      const currentItem = state.items.find((item) => item.id === id);
+      if (!currentItem) return;
+      
+      // Оптимистичное обновление UI
+      dispatch({ type: 'UPDATE_ITEM', payload: { id, ...patch } });
+      
       try {
-        await updateListItemRemote(activeListId, id, patch);
+        const updated = await updateListItemRemote(activeListId, id, patch);
+        if (!updated) {
+          // Если обновление не удалось, откатываем изменение
+          dispatch({ type: 'UPDATE_ITEM', payload: { id, ...currentItem } });
+        }
       } catch (error) {
         console.error('Failed to sync update', error);
+        // Откатываем изменение при ошибке
+        dispatch({ type: 'UPDATE_ITEM', payload: { id, ...currentItem } });
       }
     },
-    [activeListId]
+    [activeListId, state.items]
   );
 
   const selectList = useCallback((listId: string) => {
@@ -671,13 +846,48 @@ export const ShoppingListProvider: React.FC<{ children: ReactNode }> = ({ childr
   const syncRemoveItem = useCallback(
     async (id: string) => {
       if (!activeListId) return;
+      
+      // Сохраняем удаляемый элемент для отката
+      const itemToRemove = state.items.find((item) => item.id === id);
+      if (!itemToRemove) return;
+      
+      // Оптимистичное удаление из UI
+      dispatch({ type: 'REMOVE_ITEM', payload: { id } });
+      
       try {
-        await deleteListItemRemote(activeListId, id);
+        const success = await deleteListItemRemote(activeListId, id);
+        if (!success) {
+          // Если удаление не удалось, восстанавливаем элемент
+          dispatch({ type: 'ADD_ITEM', payload: itemToRemove });
+        }
       } catch (error) {
         console.error('Failed to sync removal', error);
+        // Восстанавливаем элемент при ошибке
+        dispatch({ type: 'ADD_ITEM', payload: itemToRemove });
       }
     },
-    [activeListId]
+    [activeListId, state.items]
+  );
+
+  const leaveList = useCallback(
+    async (listId: string): Promise<void> => {
+      if (!user?.id) return;
+      const success = await leaveListService(listId, user.id);
+      if (success) {
+        // Обновляем списки после выхода
+        await refreshLists();
+        // Если вышли из активного списка, выбираем другой
+        if (activeListId === listId) {
+          const remainingLists = lists.filter((l) => l.id !== listId);
+          if (remainingLists.length > 0) {
+            setActiveListId(remainingLists[0].id);
+          } else {
+            setActiveListId(null);
+          }
+        }
+      }
+    },
+    [user?.id, activeListId, lists, refreshLists]
   );
 
   return (
@@ -709,6 +919,7 @@ export const ShoppingListProvider: React.FC<{ children: ReactNode }> = ({ childr
         regenerateAccessCode,
         loadMembersForList,
         createList,
+        leaveList,
       }}
     >
       {children}
