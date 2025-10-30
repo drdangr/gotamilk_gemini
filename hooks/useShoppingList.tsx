@@ -895,21 +895,14 @@ export const ShoppingListProvider: React.FC<{ children: ReactNode }> = ({ childr
   const renameList = useCallback(
     async (listId: string, newName: string): Promise<void> => {
       if (!user?.id) return;
-      const success = await renameListService(listId, user.id, newName);
+      const trimmed = newName.trim();
+      if (!trimmed) return;
+      const success = await renameListService(listId, user.id, trimmed);
       if (success) {
-        // Обновляем списки после переименования
         await refreshLists();
-        // Обновляем активный список, если он был переименован
-        if (activeListId === listId) {
-          const updated = await refreshLists();
-          const renamedList = updated.find((l) => l.id === listId);
-          if (renamedList) {
-            setActiveList(renamedList);
-          }
-        }
       }
     },
-    [user?.id, activeListId, refreshLists]
+    [user?.id, refreshLists]
   );
 
   return (
