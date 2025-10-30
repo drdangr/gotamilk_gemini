@@ -11,4 +11,15 @@ export async function ensureProfile(user: User): Promise<void> {
   );
 }
 
+export async function updateProfileShortName(userId: string, shortName: string | null): Promise<boolean> {
+  if (!supabase) return false;
+  
+  const { error } = await supabase
+    .from('profiles')
+    .update({ short_name: shortName })
+    .eq('id', userId);
+  
+  return !error;
+}
+
 

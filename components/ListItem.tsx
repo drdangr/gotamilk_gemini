@@ -19,12 +19,31 @@ const UNITS = ['pcs', 'L', 'kg', 'g', 'loaf', 'bottle', 'box', 'jar', 'unit'];
 const ListItemComponent: React.FC<{ item: ListItem }> = ({ item }) => {
   const { dispatch, expandedItemId, setExpandedItemId, syncUpdateItem, syncRemoveItem, members } = useShoppingList();
   const { user } = useAuth();
+  const [userProfile, setUserProfile] = useState<{ short_name?: string | null } | null>(null);
   const { attributes, listeners, setNodeRef, transform, transition, isDragging } = useSortable({ id: item.id });
 
   const isExpanded = expandedItemId === item.id;
   const [isEditingQuantity, setIsEditingQuantity] = useState(false);
   const [editableQuantity, setEditableQuantity] = useState(item.quantity.toString());
   const quantityInputRef = useRef<HTMLInputElement>(null);
+  
+  // Загружаем профиль пользователя при монтировании
+  useEffect(() => {
+    if (user && !userProfile) {
+      import('../services/supabaseClient').then(({ supabase }) => {
+        if (supabase) {
+          supabase
+            .from('profiles')
+            .select('short_name')
+            .eq('id', user.id)
+            .single()
+            .then(({ data }) => {
+              if (data) setUserProfile(data);
+            });
+        }
+      });
+    }
+  }, [user, userProfile]);
 
   useEffect(() => {
     if (isEditingQuantity) {
@@ -64,6 +83,7 @@ const ListItemComponent: React.FC<{ item: ListItem }> = ({ item }) => {
     ? {
         id: user.id,
         name:
+          userProfile?.short_name ||
           (user.user_metadata?.full_name as string | undefined) ||
           (user.user_metadata?.name as string | undefined) ||
           user.email ||

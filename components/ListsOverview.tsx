@@ -163,17 +163,10 @@ const ListsOverview: React.FC = () => {
                   )}
                 </div>
                 <div className="flex items-center gap-3 text-sm text-gray-500 dark:text-gray-400">
-                  {list.owner ? (
-                    <span className="inline-flex items-center gap-1">
-                      <Crown className="h-4 w-4 text-amber-500" />
-                      {list.owner.name || 'Без имени'}
-                    </span>
-                  ) : (
-                    <span className="inline-flex items-center gap-1">
-                      <Crown className="h-4 w-4 text-amber-500" />
-                      Владелец
-                    </span>
-                  )}
+                  <span className="inline-flex items-center gap-1">
+                    <Crown className="h-4 w-4 text-amber-500" />
+                    {list.owner?.name || 'Владелец'}
+                  </span>
                   <span className="px-2 py-1 rounded-full bg-indigo-100 dark:bg-indigo-900/40 text-indigo-600 dark:text-indigo-300 text-xs font-semibold uppercase">
                     {roleLabels[list.role]}
                   </span>

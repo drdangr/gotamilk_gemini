@@ -79,7 +79,8 @@ export async function fetchUserLists(userId: string): Promise<ListSummary[]> {
         owner:profiles!lists_owner_id_fkey (
           id,
           name,
-          avatar_url
+          avatar_url,
+          short_name
         )
       )
     `)
@@ -97,6 +98,7 @@ export async function fetchUserLists(userId: string): Promise<ListSummary[]> {
         id: string;
         name: string | null;
         avatar_url: string | null;
+        short_name: string | null;
       } | null;
     }) | null;
     if (list) {
@@ -111,7 +113,7 @@ export async function fetchUserLists(userId: string): Promise<ListSummary[]> {
         owner: ownerProfile
           ? {
               id: ownerProfile.id,
-              name: ownerProfile.name,
+              name: ownerProfile.short_name || ownerProfile.name || 'Владелец',
               avatar_url: ownerProfile.avatar_url,
             }
           : null,
@@ -168,7 +170,8 @@ export async function fetchListMembers(listId: string): Promise<ListMember[]> {
       profile:profiles!list_members_user_id_fkey (
         id,
         name,
-        avatar_url
+        avatar_url,
+        short_name
       )
     `)
     .eq('list_id', listId)
@@ -184,11 +187,12 @@ export async function fetchListMembers(listId: string): Promise<ListMember[]> {
       id: string;
       name: string | null;
       avatar_url: string | null;
+      short_name: string | null;
     } | null;
     return {
       id: row.user_id,
       role: row.role,
-      name: profile?.name ?? 'Member',
+      name: profile?.short_name || profile?.name || 'Member',
       avatar: profile?.avatar_url ?? undefined,
       email: null,
     } satisfies ListMember;

@@ -12,6 +12,7 @@ create table if not exists public.profiles (
   id uuid primary key references auth.users(id) on delete cascade,
   name text,
   avatar_url text,
+  short_name text,
   created_at timestamp with time zone default now()
 );
 
@@ -63,6 +64,9 @@ create index if not exists idx_list_members_user on public.list_members(user_id)
 
 alter table public.lists
   add column if not exists access_code text not null default upper(substring(md5(gen_random_uuid()::text), 1, 6));
+
+alter table public.profiles
+  add column if not exists short_name text;
 
 create index if not exists idx_lists_access_code on public.lists(access_code);
 
