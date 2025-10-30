@@ -37,7 +37,7 @@ const GroupedList: React.FC<{ items: ListItem[]; groups: SmartSortResult; allIte
 }
 
 const ShoppingListView: React.FC = () => {
-  const { items, sortType, smartSortGroups, loading, setItems } = useShoppingList();
+  const { items, sortType, smartSortGroups, loading, setItems, activeList } = useShoppingList();
   
   const sensors = useSensors(
     useSensor(PointerSensor, {
@@ -63,7 +63,16 @@ const ShoppingListView: React.FC = () => {
   return (
     <div className="bg-white dark:bg-gray-800 p-4 sm:p-6 rounded-2xl shadow-lg">
       <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center mb-4 gap-4">
-        <h2 className="text-xl font-semibold text-gray-700 dark:text-gray-300">Shopping List</h2>
+        <div>
+          <h2 className="text-xl font-semibold text-gray-700 dark:text-gray-300">
+            {activeList?.name || 'Список покупок'}
+          </h2>
+          {activeList?.owner?.name && (
+            <p className="text-sm text-gray-500 dark:text-gray-400">
+              Владелец: {activeList.owner.name}
+            </p>
+          )}
+        </div>
         <SortControls />
       </div>
       {loading ? (

@@ -28,6 +28,7 @@ import {
   refreshAccessCode,
   subscribeToListMembers,
   type ListSummary,
+  createListForUser,
 } from '../services/lists';
 import {
   fetchListItems,
@@ -256,6 +257,7 @@ interface ShoppingListContextType extends State {
   joinListByCode: (code: string) => Promise<ListSummary | null>;
   regenerateAccessCode: () => Promise<string | null>;
   loadMembersForList: (listId: string) => Promise<ListMember[]>;
+  createList: (name: string) => Promise<ListSummary | null>;
 }
 
 const ShoppingListContext = createContext<ShoppingListContextType | undefined>(undefined);
@@ -598,6 +600,27 @@ export const ShoppingListProvider: React.FC<{ children: ReactNode }> = ({ childr
     [membersByList]
   );
 
+  const createList = useCallback(
+    async (name: string): Promise<ListSummary | null> => {
+      if (!user?.id) return null;
+      const trimmed = name.trim();
+      if (!trimmed) return null;
+      try {
+        const newList = await createListForUser(user.id, trimmed);
+        if (!newList) return null;
+        setActiveListId(newList.id);
+        const updated = await refreshLists();
+        const target = updated.find((list) => list.id === newList.id) ?? newList;
+        await loadMembersForList(newList.id);
+        return target;
+      } catch (error) {
+        console.error('Failed to create list', error);
+        return null;
+      }
+    },
+    [user?.id, refreshLists, loadMembersForList]
+  );
+
   const joinListByCode = useCallback(
     async (code: string): Promise<ListSummary | null> => {
       if (!user?.id) return null;
@@ -680,6 +703,7 @@ export const ShoppingListProvider: React.FC<{ children: ReactNode }> = ({ childr
         joinListByCode,
         regenerateAccessCode,
         loadMembersForList,
+        createList,
       }}
     >
       {children}

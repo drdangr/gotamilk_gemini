@@ -1,4 +1,4 @@
-import React, { useEffect } from 'react';
+import React, { useEffect, useState } from 'react';
 import { Users, Crown, CheckCircle2 } from 'lucide-react';
 import { useShoppingList } from '../hooks/useShoppingList';
 import { useAuth } from '../providers/AuthProvider';
@@ -17,8 +17,12 @@ const ListsOverview: React.FC = () => {
     membersMap,
     loadMembersForList,
     refreshLists,
+    createList,
   } = useShoppingList();
   const { user } = useAuth();
+  const [newListName, setNewListName] = useState('');
+  const [createError, setCreateError] = useState<string | null>(null);
+  const [isCreating, setIsCreating] = useState(false);
 
   useEffect(() => {
     refreshLists().catch(() => {});
@@ -36,14 +40,109 @@ const ListsOverview: React.FC = () => {
 
   if (lists.length === 0) {
     return (
-      <div className="bg-white dark:bg-gray-800 p-8 rounded-2xl shadow-lg text-center">
-        <p className="text-gray-600 dark:text-gray-300">Пока у вас нет доступных списков. Создайте новый или попросите код доступа у членов семьи.</p>
+      <div className="space-y-4">
+        <div className="bg-white dark:bg-gray-800 p-6 rounded-2xl shadow-lg">
+          <h3 className="text-lg font-semibold text-gray-900 dark:text-gray-100 mb-3">Создать новый список</h3>
+          <p className="text-sm text-gray-500 dark:text-gray-400 mb-4">Начните с создания семейного списка покупок. Вы сразу будете его владельцем.</p>
+          <form
+            onSubmit={async (event) => {
+              event.preventDefault();
+              if (!newListName.trim()) {
+                setCreateError('Введите название списка');
+                return;
+              }
+              setIsCreating(true);
+              setCreateError(null);
+              try {
+                const created = await createList(newListName);
+                if (created) {
+                  setNewListName('');
+                } else {
+                  setCreateError('Не удалось создать список. Попробуйте ещё раз.');
+                }
+              } catch (error) {
+                console.error('Не удалось создать список', error);
+                setCreateError('Не удалось создать список. Попробуйте ещё раз.');
+              } finally {
+                setIsCreating(false);
+              }
+            }}
+            className="space-y-3"
+          >
+            <div className="flex flex-col sm:flex-row gap-2">
+              <input
+                type="text"
+                value={newListName}
+                onChange={(event) => setNewListName(event.target.value)}
+                placeholder="Например, Семейный список"
+                className="flex-1 px-3 py-2 bg-gray-100 dark:bg-gray-900/50 border border-gray-300 dark:border-gray-700 rounded-lg focus:outline-none focus:ring-2 focus:ring-indigo-500"
+                maxLength={80}
+              />
+              <button
+                type="submit"
+                disabled={isCreating || !newListName.trim()}
+                className="px-4 py-2 bg-indigo-600 text-white text-sm font-semibold rounded-lg shadow hover:bg-indigo-700 transition disabled:opacity-50"
+              >
+                {isCreating ? 'Создаём…' : 'Создать список'}
+              </button>
+            </div>
+            {createError && <p className="text-sm text-red-500">{createError}</p>}
+          </form>
+        </div>
       </div>
     );
   }
 
   return (
     <div className="space-y-4">
+      <div className="bg-white dark:bg-gray-800 p-6 rounded-2xl shadow-lg">
+        <h3 className="text-lg font-semibold text-gray-900 dark:text-gray-100 mb-3">Создать новый список</h3>
+        <form
+          onSubmit={async (event) => {
+            event.preventDefault();
+            if (!newListName.trim()) {
+              setCreateError('Введите название списка');
+              return;
+            }
+            setIsCreating(true);
+            setCreateError(null);
+            try {
+              const created = await createList(newListName);
+              if (created) {
+                setNewListName('');
+              } else {
+                setCreateError('Не удалось создать список. Попробуйте ещё раз.');
+              }
+            } catch (error) {
+              console.error('Не удалось создать список', error);
+              setCreateError('Не удалось создать список. Попробуйте ещё раз.');
+            } finally {
+              setIsCreating(false);
+            }
+          }}
+          className="space-y-3"
+        >
+          <div className="flex flex-col sm:flex-row gap-2">
+            <input
+              type="text"
+              value={newListName}
+              onChange={(event) => setNewListName(event.target.value)}
+              placeholder="Например, Семейный список"
+              className="flex-1 px-3 py-2 bg-gray-100 dark:bg-gray-900/50 border border-gray-300 dark:border-gray-700 rounded-lg focus:outline-none focus:ring-2 focus:ring-indigo-500"
+              maxLength={80}
+            />
+            <button
+              type="submit"
+              disabled={isCreating || !newListName.trim()}
+              className="px-4 py-2 bg-indigo-600 text-white text-sm font-semibold rounded-lg shadow hover:bg-indigo-700 transition disabled:opacity-50"
+            >
+              {isCreating ? 'Создаём…' : 'Создать список'}
+            </button>
+          </div>
+          {createError && <p className="text-sm text-red-500">{createError}</p>}
+        </form>
+      </div>
+
       {lists.map((list) => {
         const isActive = list.id === activeListId;
         const members = membersMap[list.id] ?? [];
