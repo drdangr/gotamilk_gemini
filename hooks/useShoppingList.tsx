@@ -536,7 +536,7 @@ export const ShoppingListProvider: React.FC<{ children: ReactNode }> = ({ childr
             }
           }
         } else if (command.intent === 'UPDATE' && command.items) {
-          command.items.forEach((parsedItem) => {
+          for (const parsedItem of command.items) {
             const existingItem = state.items.find(
               (item) =>
                 item.name.toLowerCase() === parsedItem.itemName.toLowerCase() &&
@@ -637,7 +637,7 @@ export const ShoppingListProvider: React.FC<{ children: ReactNode }> = ({ childr
                 });
               }
             }
-          });
+          }
         }
       } catch (error) {
         console.error('Failed to process command:', error);
