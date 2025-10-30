@@ -27,6 +27,16 @@ create table if not exists public.list_members (
   primary key (list_id, user_id)
 );
 
+create table if not exists public.list_invites (
+  id uuid primary key default gen_random_uuid(),
+  list_id uuid not null references public.lists(id) on delete cascade,
+  token text not null unique,
+  role text not null default 'editor' check (role in ('owner','editor','viewer')),
+  created_by uuid references public.profiles(id) on delete set null,
+  expires_at timestamp with time zone,
+  created_at timestamp with time zone default now()
+);
+
 create table if not exists public.aliases (
   id uuid primary key default gen_random_uuid(),
   name text not null
@@ -56,11 +66,13 @@ create table if not exists public.list_items (
 create index if not exists idx_list_items_list_id on public.list_items(list_id);
 create index if not exists idx_lists_owner_id on public.lists(owner_id);
 create index if not exists idx_list_members_user on public.list_members(user_id);
+create index if not exists idx_list_invites_list_id on public.list_invites(list_id);
 
 -- 3) RLS
 alter table public.profiles enable row level security;
 alter table public.lists enable row level security;
 alter table public.list_members enable row level security;
+alter table public.list_invites enable row level security;
 alter table public.list_items enable row level security;
 alter table public.products enable row level security;
 alter table public.aliases enable row level security;
@@ -207,5 +219,14 @@ drop policy if exists "list_items: modify for editors" on public.list_items;
 create policy "list_items: modify for editors" on public.list_items
   for all using (public.can_edit_list(list_id))
   with check (public.can_edit_list(list_id));
+
+drop policy if exists "list_invites: manage by editors" on public.list_invites;
+create policy "list_invites: manage by editors" on public.list_invites
+  for all using (public.can_edit_list(list_id))
+  with check (public.can_edit_list(list_id));
+
+drop policy if exists "list_invites: select" on public.list_invites;
+create policy "list_invites: select" on public.list_invites
+  for select using (public.can_edit_list(list_id));
 
 

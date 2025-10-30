@@ -12,14 +12,14 @@ export const CURRENT_USER = USERS[0];
 export const INITIAL_ITEMS: ListItem[] = [
   { id: '1', name: 'Milk', quantity: 1, unit: 'L', priority: Priority.High, status: ItemStatus.Open },
   { id: '2', name: 'Bread', quantity: 1, unit: 'loaf', priority: Priority.High, status: ItemStatus.Open },
-  { id: '3', name: 'Eggs', quantity: 12, unit: 'pcs', priority: Priority.Medium, status: ItemStatus.Intention, assignee: USERS[1] },
+  { id: '3', name: 'Eggs', quantity: 12, unit: 'pcs', priority: Priority.Medium, status: ItemStatus.Intention, assigneeId: USERS[1].id, assignee: USERS[1] },
   { id: '4', name: 'Tomatoes', quantity: 500, unit: 'g', priority: Priority.Low, status: ItemStatus.Open },
   { id: '5', name: 'Chicken Breast', quantity: 1, unit: 'kg', priority: Priority.High, status: ItemStatus.Open },
-  { id: '6', name: 'Olive Oil', quantity: 1, unit: 'bottle', priority: Priority.Low, status: ItemStatus.Purchased, assignee: USERS[0] },
+  { id: '6', name: 'Olive Oil', quantity: 1, unit: 'bottle', priority: Priority.Low, status: ItemStatus.Purchased, assigneeId: USERS[0].id, assignee: USERS[0] },
   { id: '7', name: 'Laundry Detergent', quantity: 1, unit: 'box', priority: Priority.Medium, status: ItemStatus.Open },
   { id: '8', name: 'Yogurt', quantity: 4, unit: 'pcs', priority: Priority.None, status: ItemStatus.Open },
   { id: '9', name: 'Cucumbers', quantity: 2, unit: 'pcs', priority: Priority.None, status: ItemStatus.Open },
-  { id: '10', name: 'Onion', quantity: 1, unit: 'kg', priority: Priority.None, status: ItemStatus.Purchased, assignee: USERS[2] },
+  { id: '10', name: 'Onion', quantity: 1, unit: 'kg', priority: Priority.None, status: ItemStatus.Purchased, assigneeId: USERS[2].id, assignee: USERS[2] },
   { id: '11', name: 'Pickles', quantity: 1, unit: 'jar', priority: Priority.None, status: ItemStatus.Open },
 ];
 

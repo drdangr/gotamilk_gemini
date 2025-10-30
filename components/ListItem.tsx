@@ -1,8 +1,7 @@
-import React, { useState, useRef, useEffect } from 'react';
+import React, { useState, useRef, useEffect, useMemo } from 'react';
 import type { ListItem } from '../types';
 import { ItemStatus, Priority } from '../types';
 import { useShoppingList } from '../hooks/useShoppingList';
-import { USERS } from '../constants';
 import { GripVertical, User as UserIcon, X, Check, Flame, Trash2, Minus, Plus } from 'lucide-react';
 import { useSortable } from '@dnd-kit/sortable';
 import { CSS } from '@dnd-kit/utilities';
@@ -18,7 +17,7 @@ const priorityMap = {
 const UNITS = ['pcs', 'L', 'kg', 'g', 'loaf', 'bottle', 'box', 'jar', 'unit'];
 
 const ListItemComponent: React.FC<{ item: ListItem }> = ({ item }) => {
-  const { dispatch, expandedItemId, setExpandedItemId, syncUpdateItem, syncRemoveItem } = useShoppingList();
+  const { dispatch, expandedItemId, setExpandedItemId, syncUpdateItem, syncRemoveItem, members } = useShoppingList();
   const { user } = useAuth();
   const { attributes, listeners, setNodeRef, transform, transition, isDragging } = useSortable({ id: item.id });
 
@@ -41,38 +40,83 @@ const ListItemComponent: React.FC<{ item: ListItem }> = ({ item }) => {
     opacity: isDragging ? 0.8 : 1,
   };
 
+  const membersById = useMemo(() => {
+    const map = new Map<string, (typeof members)[number]>();
+    members.forEach((member) => {
+      map.set(member.id, member);
+    });
+    return map;
+  }, [members]);
+
+  const resolvedAssignee = useMemo(() => {
+    if (item.assigneeId && membersById.has(item.assigneeId)) {
+      return membersById.get(item.assigneeId)!;
+    }
+    if (item.assignee?.id && membersById.has(item.assignee.id)) {
+      return membersById.get(item.assignee.id)!;
+    }
+    return item.assignee;
+  }, [item.assigneeId, item.assignee, membersById]);
+
+  const currentAssigneeId = item.assigneeId ?? resolvedAssignee?.id ?? null;
   const isPurchased = item.status === ItemStatus.Purchased;
   const currentUserAssignee = user
     ? {
         id: user.id,
-        name: user.user_metadata?.full_name || user.email || 'You',
-        avatar: user.user_metadata?.avatar_url || '',
+        name:
+          (user.user_metadata?.full_name as string | undefined) ||
+          (user.user_metadata?.name as string | undefined) ||
+          user.email ||
+          'You',
+        avatar: (user.user_metadata?.avatar_url as string | undefined) || undefined,
+        email: user.email || undefined,
       }
     : undefined;
-  const isAssignedToCurrentUser = item.assignee?.id && user ? item.assignee.id === user.id : false;
-  const isAssigned = !!item.assignee;
+  const isAssignedToCurrentUser = currentAssigneeId !== null && user ? currentAssigneeId === user.id : false;
+  const isAssigned = currentAssigneeId !== null;
+  const assigneeSelectValue = currentAssigneeId ?? '';
 
   const handleClaim = (e: React.MouseEvent) => {
     e.stopPropagation();
     if (!user) return;
     if (isAssignedToCurrentUser) {
-      syncUpdateItem(item.id, { assignee: undefined, status: ItemStatus.Open });
-      dispatch({ type: 'UPDATE_ITEM', payload: { id: item.id, assignee: undefined, status: ItemStatus.Open } });
+      syncUpdateItem(item.id, { assigneeId: null, status: ItemStatus.Open });
+      dispatch({
+        type: 'UPDATE_ITEM',
+        payload: { id: item.id, assignee: undefined, assigneeId: null, status: ItemStatus.Open },
+      });
     } else if (!isAssigned && currentUserAssignee) {
-      syncUpdateItem(item.id, { assignee: currentUserAssignee, status: ItemStatus.Intention });
-      dispatch({ type: 'UPDATE_ITEM', payload: { id: item.id, assignee: currentUserAssignee, status: ItemStatus.Intention } });
+      syncUpdateItem(item.id, {
+        assigneeId: currentUserAssignee.id,
+        status: ItemStatus.Intention,
+      });
+      dispatch({
+        type: 'UPDATE_ITEM',
+        payload: {
+          id: item.id,
+          assignee: currentUserAssignee,
+          assigneeId: currentUserAssignee.id,
+          status: ItemStatus.Intention,
+        },
+      });
     }
   };
 
   const handlePurchaseToggle = (e: React.MouseEvent) => {
     e.stopPropagation();
-    const isPurchased = item.status === ItemStatus.Purchased;
     const newStatus = isPurchased ? ItemStatus.Open : ItemStatus.Purchased;
-    const newAssignee = isPurchased
-      ? undefined
-      : item.assignee || currentUserAssignee;
-    syncUpdateItem(item.id, { status: newStatus, assignee: newAssignee });
-    dispatch({ type: 'UPDATE_ITEM', payload: { id: item.id, status: newStatus, assignee: newAssignee } });
+    const newAssignee = isPurchased ? undefined : resolvedAssignee || currentUserAssignee;
+    const newAssigneeId = newAssignee ? newAssignee.id : null;
+    syncUpdateItem(item.id, { status: newStatus, assigneeId: newAssigneeId });
+    dispatch({
+      type: 'UPDATE_ITEM',
+      payload: {
+        id: item.id,
+        status: newStatus,
+        assignee: newAssignee,
+        assigneeId: newAssigneeId,
+      },
+    });
   };
 
   const handleDelete = (e: React.MouseEvent) => {
@@ -128,24 +172,25 @@ const ListItemComponent: React.FC<{ item: ListItem }> = ({ item }) => {
   };
 
   const handleAssigneeChange = (e: React.ChangeEvent<HTMLSelectElement>) => {
-    const assigneeId = e.target.value;
-    const newAssignee = USERS.find(u => u.id === assigneeId);
+    const selectedId = e.target.value;
+    const nextAssigneeId = selectedId ? selectedId : null;
+    const newAssignee = nextAssigneeId ? membersById.get(nextAssigneeId) || resolvedAssignee : undefined;
+    const nextStatus = newAssignee ? ItemStatus.Intention : ItemStatus.Open;
+
     dispatch({
       type: 'UPDATE_ITEM',
       payload: {
         id: item.id,
         assignee: newAssignee,
-        status: newAssignee ? ItemStatus.Intention : ItemStatus.Open,
+        assigneeId: nextAssigneeId,
+        status: nextStatus,
       },
     });
-    if (newAssignee && newAssignee.id.includes('-')) {
-      syncUpdateItem(item.id, {
-        assignee: newAssignee,
-        status: ItemStatus.Intention,
-      });
-    } else if (!newAssignee) {
-      syncUpdateItem(item.id, { assignee: undefined, status: ItemStatus.Open });
-    }
+
+    syncUpdateItem(item.id, {
+      assigneeId: nextAssigneeId,
+      status: nextStatus,
+    });
   };
 
   return (
@@ -176,10 +221,20 @@ const ListItemComponent: React.FC<{ item: ListItem }> = ({ item }) => {
         </div>
 
         <div className="flex items-center space-x-2">
-          {item.assignee && (
+          {resolvedAssignee && (
             <div className="flex items-center space-x-1 bg-gray-200 dark:bg-gray-600 px-2 py-1 rounded-full text-xs font-medium text-gray-700 dark:text-gray-200">
-              <img src={item.assignee.avatar} alt={item.assignee.name} className="w-4 h-4 rounded-full" />
-              <span>{user && item.assignee.id === user.id ? 'You' : item.assignee.name.split(' ')[0]}</span>
+              {resolvedAssignee.avatar ? (
+                <img src={resolvedAssignee.avatar} alt={resolvedAssignee.name ?? resolvedAssignee.email ?? 'Assignee'} className="w-4 h-4 rounded-full" />
+              ) : (
+                <div className="w-4 h-4 rounded-full bg-indigo-500 text-white flex items-center justify-center text-[10px]">
+                  {(resolvedAssignee.name?.charAt(0) || resolvedAssignee.email?.charAt(0) || '?').toUpperCase()}
+                </div>
+              )}
+              <span>
+                {user && resolvedAssignee.id === user.id
+                  ? 'You'
+                  : (resolvedAssignee.name?.split(' ')[0] || resolvedAssignee.email || 'Member')}
+              </span>
             </div>
           )}
 
@@ -252,13 +307,17 @@ const ListItemComponent: React.FC<{ item: ListItem }> = ({ item }) => {
             {/* Assignee */}
             <div className="flex items-center">
                <select 
-                  value={item.assignee?.id || ''} 
+                  value={assigneeSelectValue} 
                   onChange={handleAssigneeChange}
                   className="bg-white dark:bg-gray-700 border border-gray-300 dark:border-gray-600 rounded-md text-xs py-1 pl-2 pr-6 focus:outline-none focus:ring-1 focus:ring-indigo-500"
                   onClick={e => e.stopPropagation()}
                >
                   <option value="">Unassigned</option>
-                  {USERS.map(user => <option key={user.id} value={user.id}>{user.name}</option>)}
+                  {members.map(member => (
+                    <option key={member.id} value={member.id}>
+                      {member.name || member.email || 'Member'}
+                    </option>
+                  ))}
                </select>
             </div>
           </div>

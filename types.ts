@@ -1,7 +1,12 @@
 export interface User {
   id: string;
-  name: string;
-  avatar: string;
+  name?: string | null;
+  avatar?: string | null;
+  email?: string | null;
+}
+
+export interface ListMember extends User {
+  role: 'owner' | 'editor' | 'viewer';
 }
 
 export enum ItemStatus {
@@ -24,6 +29,7 @@ export interface ListItem {
   unit: string;
   priority: Priority;
   status: ItemStatus;
+  assigneeId?: string | null;
   assignee?: User;
 }
 

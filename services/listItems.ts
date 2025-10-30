@@ -24,7 +24,7 @@ export async function insertListItem(listId: string, partial: Omit<ListItem, 'id
     unit: partial.unit,
     priority: partial.priority,
     status: partial.status,
-    assignee_user_id: partial.assignee?.id || null,
+    assignee_user_id: partial.assignee?.id || partial.assigneeId || null,
   };
   const { data, error } = await supabase
     .from('list_items')
@@ -46,7 +46,11 @@ export async function updateListItem(listId: string, id: string, patch: Partial<
   if (patch.unit !== undefined) payload.unit = patch.unit;
   if (patch.priority !== undefined) payload.priority = patch.priority;
   if (patch.status !== undefined) payload.status = patch.status;
-  if (patch.assignee !== undefined) payload.assignee_user_id = patch.assignee?.id || null;
+  if (patch.assigneeId !== undefined) {
+    payload.assignee_user_id = patch.assigneeId || null;
+  } else if (patch.assignee !== undefined) {
+    payload.assignee_user_id = patch.assignee?.id || null;
+  }
 
   const { data, error } = await supabase
     .from('list_items')
@@ -84,7 +88,8 @@ export function mapRowToListItem(row: any): ListItem {
     unit: row.unit || 'pcs',
     priority: Number(row.priority ?? 0) as Priority,
     status: row.status,
-    assignee: row.assignee_user_id ? { id: row.assignee_user_id, name: '', avatar: '' } : undefined,
+    assigneeId: row.assignee_user_id ?? undefined,
+    assignee: row.assignee_user_id ? { id: row.assignee_user_id } : undefined,
   };
 }
 
