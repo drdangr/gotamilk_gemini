@@ -24,6 +24,8 @@ import {
   getOrCreateDefaultList,
   fetchUserLists,
   fetchListMembers,
+  joinListByAccessCode,
+  refreshAccessCode,
   subscribeToListMembers,
   type ListSummary,
 } from '../services/lists';
@@ -34,9 +36,7 @@ import {
   deleteListItem as deleteListItemRemote,
   subscribeToListItems,
 } from '../services/listItems';
-import { acceptInvite } from '../services/invites';
 
-const PENDING_INVITE_TOKEN_KEY = 'shopsync_pending_invite_token';
 
 type Action =
   | { type: 'ADD_ITEM'; payload: ListItem }
@@ -245,12 +245,17 @@ interface ShoppingListContextType extends State {
   syncUpdateItem: (id: string, patch: Partial<ListItem>) => Promise<void>;
   syncRemoveItem: (id: string) => Promise<void>;
   activeListId: string | null;
+  activeList: ListSummary | null;
   activeListRole: 'owner' | 'editor' | 'viewer' | null;
   lists: ListSummary[];
   members: ListMember[];
+  membersMap: Record<string, ListMember[]>;
   selectList: (listId: string) => void;
   refreshLists: () => Promise<ListSummary[]>;
   refreshActiveList: () => Promise<void>;
+  joinListByCode: (code: string) => Promise<ListSummary | null>;
+  regenerateAccessCode: () => Promise<string | null>;
+  loadMembersForList: (listId: string) => Promise<ListMember[]>;
 }
 
 const ShoppingListContext = createContext<ShoppingListContextType | undefined>(undefined);
@@ -261,10 +266,10 @@ export const ShoppingListProvider: React.FC<{ children: ReactNode }> = ({ childr
   const [activeListId, setActiveListId] = useState<string | null>(null);
   const [lists, setLists] = useState<ListSummary[]>([]);
   const [activeList, setActiveList] = useState<ListSummary | null>(null);
-  const [members, setMembers] = useState<ListMember[]>([]);
-  const [pendingInviteToken, setPendingInviteToken] = useState<string | null>(null);
-  const inviteProcessingRef = useRef(false);
+  const [membersByList, setMembersByList] = useState<Record<string, ListMember[]>>({});
+  const isJoiningRef = useRef(false);
   const itemsRef = useRef<ListItem[]>(state.items);
+  const members = activeListId ? membersByList[activeListId] ?? [] : [];
 
   useEffect(() => {
     itemsRef.current = state.items;
@@ -273,6 +278,8 @@ export const ShoppingListProvider: React.FC<{ children: ReactNode }> = ({ childr
   const refreshLists = useCallback(async (): Promise<ListSummary[]> => {
     if (!user) {
       setLists([]);
+      setMembersByList({});
+      setActiveListId(null);
       return [];
     }
     const userLists = await fetchUserLists(user.id);
@@ -289,11 +296,11 @@ export const ShoppingListProvider: React.FC<{ children: ReactNode }> = ({ childr
         fetchListMembers(activeListId),
       ]);
       dispatch({ type: 'SET_ITEMS', payload: remoteItems });
-      setMembers(remoteMembers);
+      setMembersByList((prev) => ({ ...prev, [activeListId]: remoteMembers }));
     } finally {
       dispatch({ type: 'SET_LOADING', payload: { loading: false } });
     }
-  }, [activeListId, dispatch, setMembers]);
+  }, [activeListId, dispatch]);
 
   useEffect(() => {
     if (!activeListId) {
@@ -305,88 +312,11 @@ export const ShoppingListProvider: React.FC<{ children: ReactNode }> = ({ childr
   }, [activeListId, lists]);
 
   useEffect(() => {
-    if (typeof window === 'undefined') return;
-    const url = new URL(window.location.href);
-    const inviteToken = url.searchParams.get('invite');
-    if (inviteToken) {
-      setPendingInviteToken(inviteToken);
-      localStorage.setItem(PENDING_INVITE_TOKEN_KEY, inviteToken);
-      url.searchParams.delete('invite');
-      window.history.replaceState({}, document.title, url.toString());
-    } else {
-      const stored = localStorage.getItem(PENDING_INVITE_TOKEN_KEY);
-      if (stored) {
-        setPendingInviteToken(stored);
-      }
-    }
-  }, []);
-
-  useEffect(() => {
-    let cancelled = false;
-    async function initializeLists() {
-      if (!user) {
-        setLists([]);
-        setMembers([]);
-        setActiveListId(null);
-        dispatch({ type: 'SET_ITEMS', payload: [] });
-        dispatch({ type: 'SET_LOADING', payload: { loading: false } });
-        return;
-      }
-
-      dispatch({ type: 'SET_LOADING', payload: { loading: true } });
-
-      const primaryList = await getOrCreateDefaultList(user.id);
-      if (cancelled) return;
-      const userLists = await refreshLists();
-      if (cancelled) return;
-
-      const targetListId = primaryList?.id || userLists[0]?.id || null;
-      if (targetListId) {
-        setActiveListId((prev) => prev ?? targetListId);
-      } else {
-        dispatch({ type: 'SET_LOADING', payload: { loading: false } });
-      }
-    }
-    initializeLists();
-    return () => {
-      cancelled = true;
-    };
-  }, [user?.id, refreshLists]);
-
-  useEffect(() => {
     if (!user || !activeListId) return;
     refreshActiveList().catch((error) => {
       console.error('Failed to load active list', error);
     });
   }, [activeListId, user?.id, refreshActiveList]);
-
-  useEffect(() => {
-    if (!user?.id) return;
-    if (!pendingInviteToken) return;
-    if (inviteProcessingRef.current) return;
-
-    inviteProcessingRef.current = true;
-    acceptInvite(pendingInviteToken, user.id)
-      .then(async (result) => {
-        if (result?.listId) {
-          localStorage.removeItem(PENDING_INVITE_TOKEN_KEY);
-          setPendingInviteToken(null);
-          const updatedLists = await refreshLists();
-          const targetList = updatedLists.find((l) => l.id === result.listId);
-          if (targetList) {
-            setActiveListId(targetList.id);
-          } else {
-            setActiveListId(result.listId);
-          }
-        }
-      })
-      .catch((error) => {
-        console.error('Не удалось принять инвайт', error);
-      })
-      .finally(() => {
-        inviteProcessingRef.current = false;
-      });
-  }, [user?.id, pendingInviteToken, refreshLists]);
 
   useEffect(() => {
     if (!activeListId) return;
@@ -413,7 +343,7 @@ export const ShoppingListProvider: React.FC<{ children: ReactNode }> = ({ childr
       onChange: async () => {
         const remoteMembers = await fetchListMembers(activeListId);
         if (isActive) {
-          setMembers(remoteMembers);
+          setMembersByList((prev) => ({ ...prev, [activeListId]: remoteMembers }));
         }
       },
     });
@@ -654,6 +584,62 @@ export const ShoppingListProvider: React.FC<{ children: ReactNode }> = ({ childr
     setActiveListId(listId);
   }, []);
 
+  const loadMembersForList = useCallback(
+    async (listId: string): Promise<ListMember[]> => {
+      if (!listId) return [];
+      const existing = membersByList[listId];
+      if (existing && existing.length > 0) {
+        return existing;
+      }
+      const remoteMembers = await fetchListMembers(listId);
+      setMembersByList((prev) => ({ ...prev, [listId]: remoteMembers }));
+      return remoteMembers;
+    },
+    [membersByList]
+  );
+
+  const joinListByCode = useCallback(
+    async (code: string): Promise<ListSummary | null> => {
+      if (!user?.id) return null;
+      const trimmed = code.trim();
+      if (!trimmed) return null;
+      if (isJoiningRef.current) return null;
+
+      isJoiningRef.current = true;
+      try {
+        const joined = await joinListByAccessCode(trimmed, user.id);
+        if (!joined) return null;
+        const updatedLists = await refreshLists();
+        const target = updatedLists.find((l) => l.id === joined.id) ?? joined;
+        await loadMembersForList(joined.id);
+        setActiveListId(joined.id);
+        return target;
+      } catch (error) {
+        console.error('Failed to join list by code', error);
+        return null;
+      } finally {
+        isJoiningRef.current = false;
+      }
+    },
+    [user?.id, refreshLists, loadMembersForList]
+  );
+
+  const regenerateAccessCode = useCallback(async (): Promise<string | null> => {
+    if (!user?.id || !activeListId) return null;
+    const nextCode = await refreshAccessCode(activeListId, user.id);
+    if (!nextCode) return null;
+
+    setLists((prev) =>
+      prev.map((list) =>
+        list.id === activeListId
+          ? { ...list, access_code: nextCode }
+          : list
+      )
+    );
+    setActiveList((prev) => (prev && prev.id === activeListId ? { ...prev, access_code: nextCode } : prev));
+    return nextCode;
+  }, [user?.id, activeListId]);
+
   const syncRemoveItem = useCallback(
     async (id: string) => {
       if (!activeListId) return;
@@ -682,13 +668,18 @@ export const ShoppingListProvider: React.FC<{ children: ReactNode }> = ({ childr
         setExpandedItemId,
         syncUpdateItem,
         syncRemoveItem,
+        activeList,
         activeListId,
         activeListRole: activeList?.role ?? null,
         lists,
         members,
+        membersMap: membersByList,
         selectList,
         refreshLists,
         refreshActiveList,
+        joinListByCode,
+        regenerateAccessCode,
+        loadMembersForList,
       }}
     >
       {children}

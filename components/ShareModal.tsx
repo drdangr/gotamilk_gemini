@@ -1,8 +1,7 @@
 
 import React, { useEffect, useMemo, useState } from 'react';
-import { Copy, Loader2, X } from 'lucide-react';
+import { Copy, Loader2, RefreshCcw, X } from 'lucide-react';
 import { useShoppingList } from '../hooks/useShoppingList';
-import { getOrCreateActiveInvite } from '../services/invites';
 
 interface ShareModalProps {
   isOpen: boolean;
@@ -10,68 +9,29 @@ interface ShareModalProps {
 }
 
 const ShareModal: React.FC<ShareModalProps> = ({ isOpen, onClose }) => {
-  const { activeListId, lists } = useShoppingList();
-  const activeList = useMemo(
-    () => lists.find((list) => list.id === activeListId) ?? null,
-    [lists, activeListId]
-  );
+  const {
+    activeList,
+    activeListRole,
+    joinListByCode,
+    regenerateAccessCode,
+  } = useShoppingList();
 
-  const [shareLink, setShareLink] = useState('');
   const [isCopied, setIsCopied] = useState(false);
-  const [isLoading, setIsLoading] = useState(false);
-  const [error, setError] = useState<string | null>(null);
+  const [isRefreshing, setIsRefreshing] = useState(false);
+  const [joinCode, setJoinCode] = useState('');
+  const [joinLoading, setJoinLoading] = useState(false);
+  const [joinSuccess, setJoinSuccess] = useState<string | null>(null);
+  const [joinError, setJoinError] = useState<string | null>(null);
 
-  useEffect(() => {
-    if (!isOpen) return;
-    if (!activeListId) {
-      setShareLink('');
-      setError('Нет активного списка для приглашения.');
-      return;
-    }
-
-    let isCancelled = false;
-
-    async function loadInvite() {
-      setIsLoading(true);
-      setError(null);
-      try {
-        const invite = await getOrCreateActiveInvite(activeListId);
-        if (isCancelled) return;
-        if (!invite) {
-          setError('Не удалось получить ссылку.');
-          setShareLink('');
-          return;
-        }
-        const rawBaseUrl =
-          (import.meta.env.VITE_PUBLIC_SITE_URL as string | undefined) ||
-          (typeof window !== 'undefined' ? window.location.origin : '');
-        const normalizedBaseUrl = rawBaseUrl.replace(/\/$/, '');
-        const link = `${normalizedBaseUrl}?invite=${invite.token}`;
-        setShareLink(link);
-      } catch (err) {
-        console.error('Не удалось создать инвайт', err);
-        if (!isCancelled) {
-          setError('Не удалось создать ссылку. Попробуйте ещё раз.');
-          setShareLink('');
-        }
-      } finally {
-        if (!isCancelled) {
-          setIsLoading(false);
-        }
-      }
-    }
-
-    loadInvite();
-
-    return () => {
-      isCancelled = true;
-    };
-  }, [isOpen, activeListId]);
+  const accessCode = useMemo(() => activeList?.access_code ?? '', [activeList?.access_code]);
+  const canRegenerate = activeListRole === 'owner';
 
   useEffect(() => {
     if (!isOpen) {
       setIsCopied(false);
-      setError(null);
+      setJoinCode('');
+      setJoinError(null);
+      setJoinSuccess(null);
     }
   }, [isOpen]);
 
@@ -80,56 +40,139 @@ const ShareModal: React.FC<ShareModalProps> = ({ isOpen, onClose }) => {
   }
 
   const handleCopy = async () => {
-    if (!shareLink) return;
+    if (!accessCode) return;
     try {
-      await navigator.clipboard.writeText(shareLink);
+      await navigator.clipboard.writeText(accessCode);
       setIsCopied(true);
       setTimeout(() => setIsCopied(false), 2000);
-    } catch (err) {
-      console.error('Не удалось скопировать ссылку', err);
-      setError('Не удалось скопировать ссылку в буфер обмена.');
+    } catch (error) {
+      console.error('Не удалось скопировать код списка', error);
+    }
+  };
+
+  const handleRegenerate = async () => {
+    if (!canRegenerate || isRefreshing) return;
+    setIsRefreshing(true);
+    try {
+      const next = await regenerateAccessCode();
+      if (next) {
+        setIsCopied(false);
+      }
+    } finally {
+      setIsRefreshing(false);
+    }
+  };
+
+  const handleJoinSubmit = async (event: React.FormEvent) => {
+    event.preventDefault();
+    if (!joinCode.trim()) return;
+    setJoinLoading(true);
+    setJoinError(null);
+    setJoinSuccess(null);
+    try {
+      const joined = await joinListByCode(joinCode);
+      if (joined) {
+        setJoinSuccess(`Вы присоединились к списку "${joined.name}"`);
+        setJoinCode('');
+      } else {
+        setJoinError('Не удалось найти список по этому коду.');
+      }
+    } catch (error) {
+      console.error('Не удалось присоединиться к списку', error);
+      setJoinError('Произошла ошибка. Попробуйте ещё раз.');
+    } finally {
+      setJoinLoading(false);
     }
   };
 
   return (
     <div className="fixed inset-0 bg-black bg-opacity-50 z-50 flex justify-center items-center" onClick={onClose}>
-      <div className="bg-white dark:bg-gray-800 rounded-lg shadow-xl p-6 w-full max-w-md mx-4" onClick={(e) => e.stopPropagation()}>
+      <div className="bg-white dark:bg-gray-800 rounded-lg shadow-xl p-6 w-full max-w-lg mx-4" onClick={(e) => e.stopPropagation()}>
         <div className="flex justify-between items-center mb-4">
-          <h2 className="text-xl font-semibold text-gray-800 dark:text-white">Share List</h2>
+          <h2 className="text-xl font-semibold text-gray-800 dark:text-white">Совместный доступ</h2>
           <button onClick={onClose} className="text-gray-400 hover:text-gray-600 dark:hover:text-gray-300">
             <X className="h-6 w-6" />
           </button>
         </div>
-        <p className="text-gray-600 dark:text-gray-300 mb-4">
-          Отправьте ссылку, чтобы пригласить других пользователей к списку
-          {activeList ? <strong className="ml-1">“{activeList.name}”</strong> : null}.
-        </p>
-        {error && <div className="text-sm text-red-500 mb-3">{error}</div>}
-        <div className="flex items-center space-x-2">
-          <input
-            type="text"
-            readOnly
-            value={isLoading ? 'Генерируем ссылку...' : shareLink}
-            className="flex-grow w-full px-3 py-2 bg-gray-100 dark:bg-gray-700 border border-gray-300 dark:border-gray-600 rounded-lg focus:outline-none"
-            disabled={isLoading || !shareLink}
-          />
-          <button
-            onClick={handleCopy}
-            disabled={isLoading || !shareLink}
-            className="flex items-center justify-center px-4 py-2 bg-indigo-600 text-white font-semibold rounded-lg shadow-md hover:bg-indigo-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-indigo-500 transition-all duration-200 disabled:opacity-60 disabled:cursor-not-allowed"
-            style={{ minWidth: '110px' }}
-          >
-            {isLoading ? (
-              <Loader2 className="h-4 w-4 animate-spin" />
-            ) : isCopied ? (
-              'Copied!'
+
+        <div className="space-y-5">
+          <section className="bg-gray-100 dark:bg-gray-900/50 rounded-xl p-4">
+            <h3 className="text-sm font-semibold text-gray-600 dark:text-gray-300 uppercase tracking-wide mb-2">Код доступа к текущему списку</h3>
+            {accessCode ? (
+              <div className="flex items-center justify-between gap-4">
+                <div className="flex-1">
+                  <div className="text-3xl font-mono font-bold text-gray-900 dark:text-gray-100 tracking-widest">
+                    {accessCode}
+                  </div>
+                  <p className="text-xs text-gray-500 dark:text-gray-400 mt-1">
+                    Поделитесь кодом, чтобы другие могли присоединиться и редактировать список.
+                  </p>
+                </div>
+                <div className="flex flex-col sm:flex-row gap-2">
+                  <button
+                    onClick={handleCopy}
+                    className="flex items-center justify-center px-3 py-2 bg-indigo-600 text-white text-sm font-medium rounded-lg shadow hover:bg-indigo-700 transition"
+                  >
+                    {isCopied ? 'Скопировано' : (
+                      <span className="flex items-center gap-2">
+                        <Copy className="h-4 w-4" />
+                        Скопировать
+                      </span>
+                    )}
+                  </button>
+                  {canRegenerate && (
+                    <button
+                      onClick={handleRegenerate}
+                      disabled={isRefreshing}
+                      className="flex items-center justify-center px-3 py-2 border border-indigo-500 text-indigo-600 dark:text-indigo-400 text-sm font-medium rounded-lg hover:bg-indigo-50 dark:hover:bg-indigo-900/30 transition disabled:opacity-60"
+                    >
+                      {isRefreshing ? (
+                        <Loader2 className="h-4 w-4 animate-spin" />
+                      ) : (
+                        <span className="flex items-center gap-2">
+                          <RefreshCcw className="h-4 w-4" />
+                          Обновить
+                        </span>
+                      )}
+                    </button>
+                  )}
+                </div>
+              </div>
             ) : (
-              <span className="flex items-center">
-                Copy
-                <Copy className="h-4 w-4 ml-2" />
-              </span>
+              <p className="text-sm text-gray-500 dark:text-gray-400">
+                Сначала выберите список, чтобы получить код доступа.
+              </p>
             )}
-          </button>
+          </section>
+
+          <section>
+            <h3 className="text-sm font-semibold text-gray-600 dark:text-gray-300 uppercase tracking-wide mb-2">Присоединиться к списку по коду</h3>
+            <form onSubmit={handleJoinSubmit} className="space-y-3">
+              <div className="flex flex-col sm:flex-row gap-2">
+                <input
+                  type="text"
+                  value={joinCode}
+                  onChange={(e) => setJoinCode(e.target.value.toUpperCase())}
+                  placeholder="Например, ABC123"
+                  className="flex-1 px-3 py-2 bg-gray-100 dark:bg-gray-900/50 border border-gray-300 dark:border-gray-700 rounded-lg focus:outline-none focus:ring-2 focus:ring-indigo-500 font-mono tracking-widest uppercase"
+                  maxLength={6}
+                />
+                <button
+                  type="submit"
+                  disabled={joinLoading || !joinCode.trim()}
+                  className="px-4 py-2 bg-indigo-600 text-white text-sm font-semibold rounded-lg shadow hover:bg-indigo-700 transition disabled:opacity-50"
+                >
+                  {joinLoading ? (
+                    <Loader2 className="h-4 w-4 animate-spin mx-auto" />
+                  ) : (
+                    'Присоединиться'
+                  )}
+                </button>
+              </div>
+              {joinSuccess && <p className="text-sm text-green-600 dark:text-green-400">{joinSuccess}</p>}
+              {joinError && <p className="text-sm text-red-500">{joinError}</p>}
+            </form>
+          </section>
         </div>
       </div>
     </div>

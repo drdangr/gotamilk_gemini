@@ -6,9 +6,10 @@ import AddItemForm from './components/AddItemForm';
 import ShareModal from './components/ShareModal';
 import ProductDatabaseView from './components/ProductDatabaseView';
 import ConfirmationModal from './components/ConfirmationModal';
-import { List, Database } from 'lucide-react';
+import ListsOverview from './components/ListsOverview';
+import { List, Database, Users } from 'lucide-react';
 
-type ActiveView = 'list' | 'database';
+type ActiveView = 'list' | 'database' | 'lists';
 
 const App: React.FC = () => {
   const [isShareModalOpen, setIsShareModalOpen] = useState(false);
@@ -32,6 +33,8 @@ const App: React.FC = () => {
         );
       case 'database':
         return <ProductDatabaseView />;
+      case 'lists':
+        return <ListsOverview />;
       default:
         return null;
     }
@@ -65,6 +68,17 @@ const App: React.FC = () => {
               >
                 <Database className="h-5 w-5" />
                 <span>Product Database</span>
+              </button>
+              <button
+                onClick={() => setActiveView('lists')}
+                className={`flex items-center space-x-2 px-4 py-2 text-sm font-medium transition-colors ${
+                  activeView === 'lists'
+                    ? 'border-b-2 border-indigo-500 text-indigo-600 dark:text-indigo-400'
+                    : 'text-gray-500 hover:text-gray-700 dark:text-gray-400 dark:hover:text-gray-200'
+                }`}
+              >
+                <Users className="h-5 w-5" />
+                <span>My Lists</span>
               </button>
             </div>
           </div>

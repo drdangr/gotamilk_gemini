@@ -4,6 +4,9 @@
 -- 0) Extensions (usually enabled by default)
 create extension if not exists pgcrypto;
 
+-- Legacy cleanup
+drop table if exists public.list_invites cascade;
+
 -- 1) Tables
 create table if not exists public.profiles (
   id uuid primary key references auth.users(id) on delete cascade,
@@ -16,6 +19,7 @@ create table if not exists public.lists (
   id uuid primary key default gen_random_uuid(),
   name text not null,
   owner_id uuid not null references public.profiles(id) on delete cascade,
+  access_code text not null unique default upper(substring(md5(gen_random_uuid()::text), 1, 6)),
   created_at timestamp with time zone default now()
 );
 
@@ -25,16 +29,6 @@ create table if not exists public.list_members (
   role text not null check (role in ('owner','editor','viewer')),
   created_at timestamp with time zone default now(),
   primary key (list_id, user_id)
-);
-
-create table if not exists public.list_invites (
-  id uuid primary key default gen_random_uuid(),
-  list_id uuid not null references public.lists(id) on delete cascade,
-  token text not null unique,
-  role text not null default 'editor' check (role in ('owner','editor','viewer')),
-  created_by uuid references public.profiles(id) on delete set null,
-  expires_at timestamp with time zone,
-  created_at timestamp with time zone default now()
 );
 
 create table if not exists public.aliases (
@@ -66,13 +60,16 @@ create table if not exists public.list_items (
 create index if not exists idx_list_items_list_id on public.list_items(list_id);
 create index if not exists idx_lists_owner_id on public.lists(owner_id);
 create index if not exists idx_list_members_user on public.list_members(user_id);
-create index if not exists idx_list_invites_list_id on public.list_invites(list_id);
+
+alter table public.lists
+  add column if not exists access_code text not null default upper(substring(md5(gen_random_uuid()::text), 1, 6));
+
+create index if not exists idx_lists_access_code on public.lists(access_code);
 
 -- 3) RLS
 alter table public.profiles enable row level security;
 alter table public.lists enable row level security;
 alter table public.list_members enable row level security;
-alter table public.list_invites enable row level security;
 alter table public.list_items enable row level security;
 alter table public.products enable row level security;
 alter table public.aliases enable row level security;
@@ -91,7 +88,9 @@ create policy "profiles: insert own" on public.profiles
 
 -- Lists: select only by owner (временно — во избежание рекурсий)
 drop policy if exists "lists: select for members" on public.lists;
--- Lists: owners can also see their lists even без membership bootstrap
+create policy "lists: select for members" on public.lists
+  for select using (public.is_list_member(id));
+-- Lists: owners can также видеть свои списки даже без membership bootstrap
 drop policy if exists "lists: select for owners" on public.lists;
 create policy "lists: select for owners" on public.lists
   for select using (owner_id = auth.uid());
@@ -107,24 +106,14 @@ create policy "lists: modify for owner" on public.lists
 -- List members: avoid self-recursive EXISTS;
 -- Select: see your rows or rows in lists you own
 drop policy if exists "list_members: select own/owner" on public.list_members;
-create policy "list_members: select own/owner" on public.list_members
-  for select using (
-    user_id = auth.uid() OR exists (
-      select 1 from public.lists l where l.id = list_members.list_id and l.owner_id = auth.uid()
-    )
-  );
+drop policy if exists "list_members: select for members" on public.list_members;
+create policy "list_members: select for members" on public.list_members
+  for select using (public.is_list_member(list_members.list_id));
 -- Manage memberships only by list owner
 drop policy if exists "list_members: manage by owner" on public.list_members;
-create policy "list_members: manage by owner" on public.list_members
-  for all using (
-    exists (
-      select 1 from public.lists l where l.id = list_members.list_id and l.owner_id = auth.uid()
-    )
-  ) with check (
-    exists (
-      select 1 from public.lists l where l.id = list_members.list_id and l.owner_id = auth.uid()
-    )
-  );
+create policy "list_members: manage by editors" on public.list_members
+  for all using (public.can_edit_list(list_members.list_id))
+  with check (public.can_edit_list(list_members.list_id));
 -- Bootstrap: allow owner of list to insert their own membership row
 drop policy if exists "list_members: bootstrap owner" on public.list_members;
 create policy "list_members: bootstrap owner" on public.list_members
@@ -170,6 +159,44 @@ begin
   new.updated_at = now();
   return new;
 end;$$ language plpgsql;
+
+create or replace function public.generate_list_access_code()
+returns text
+language sql
+as $$
+  select upper(substr(encode(gen_random_bytes(3), 'hex'), 1, 6));
+$$;
+
+create or replace function public.join_list_by_code(p_access_code text)
+returns public.lists
+language plpgsql
+security definer
+set search_path = public
+as $$
+declare
+  normalized text := upper(trim(p_access_code));
+  target_list public.lists;
+begin
+  if normalized is null or normalized = '' then
+    raise exception 'ACCESS_CODE_REQUIRED';
+  end if;
+
+  select * into target_list
+  from public.lists
+  where upper(access_code) = normalized
+  limit 1;
+
+  if target_list is null then
+    raise exception 'LIST_NOT_FOUND';
+  end if;
+
+  insert into public.list_members(list_id, user_id, role)
+  values (target_list.id, auth.uid(), 'editor')
+  on conflict (list_id, user_id) do nothing;
+
+  return target_list;
+end;
+$$;
 
 drop trigger if exists trg_set_updated_at on public.list_items;
 create trigger trg_set_updated_at before update on public.list_items
@@ -220,13 +247,9 @@ create policy "list_items: modify for editors" on public.list_items
   for all using (public.can_edit_list(list_id))
   with check (public.can_edit_list(list_id));
 
-drop policy if exists "list_invites: manage by editors" on public.list_invites;
-create policy "list_invites: manage by editors" on public.list_invites
-  for all using (public.can_edit_list(list_id))
-  with check (public.can_edit_list(list_id));
-
-drop policy if exists "list_invites: select" on public.list_invites;
-create policy "list_invites: select" on public.list_invites
-  for select using (public.can_edit_list(list_id));
+drop policy if exists "lists: update access code" on public.lists;
+create policy "lists: update access code" on public.lists
+  for update using (owner_id = auth.uid())
+  with check (owner_id = auth.uid());
 
 

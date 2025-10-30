@@ -1,15 +1,37 @@
 import { supabase } from './supabaseClient';
 import type { ListMember } from '../types';
 
+const ACCESS_CODE_LENGTH = 6;
+
+function generateAccessCode(): string {
+  const alphabet = 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789';
+  let result = '';
+  for (let i = 0; i < ACCESS_CODE_LENGTH; i += 1) {
+    const idx = Math.floor(Math.random() * alphabet.length);
+    result += alphabet[idx];
+  }
+  return result;
+}
+
+function normalizeAccessCode(raw: string): string {
+  return raw.trim().toUpperCase();
+}
+
 export interface ListRecord {
   id: string;
   name: string;
   owner_id: string;
   created_at: string;
+  access_code: string;
 }
 
 export interface ListSummary extends ListRecord {
   role: 'owner' | 'editor' | 'viewer';
+  owner?: {
+    id: string;
+    name: string | null;
+    avatar_url: string | null;
+  } | null;
 }
 
 type RawMembershipRow = {
@@ -21,6 +43,12 @@ type RawMembershipRow = {
     name: string;
     owner_id: string;
     created_at: string;
+    access_code: string;
+    profiles?: {
+      id: string;
+      name: string | null;
+      avatar_url: string | null;
+    } | null;
   } | null;
 };
 
@@ -31,6 +59,7 @@ type RawMemberRow = {
     id: string;
     name: string | null;
     avatar_url: string | null;
+    email: string | null;
   } | null;
 };
 
@@ -38,7 +67,7 @@ export async function fetchUserLists(userId: string): Promise<ListSummary[]> {
   if (!supabase) return [];
   const { data, error } = await supabase
     .from('list_members')
-    .select('list_id, role, created_at, lists!inner(id, name, owner_id, created_at)')
+    .select('list_id, role, created_at, lists!inner(id, name, owner_id, created_at, access_code, profiles!inner(id, name, avatar_url))')
     .eq('user_id', userId)
     .order('created_at', { ascending: true });
 
@@ -55,7 +84,15 @@ export async function fetchUserLists(userId: string): Promise<ListSummary[]> {
         name: list.name,
         owner_id: list.owner_id,
         created_at: list.created_at,
+        access_code: list.access_code,
         role: row.role,
+        owner: list.profiles
+          ? {
+              id: list.profiles.id,
+              name: list.profiles.name,
+              avatar_url: list.profiles.avatar_url,
+            }
+          : null,
       } satisfies ListSummary;
     }
     return {
@@ -63,17 +100,19 @@ export async function fetchUserLists(userId: string): Promise<ListSummary[]> {
       name: 'Shared list',
       owner_id: userId,
       created_at: row.created_at || new Date(0).toISOString(),
+      access_code: '------',
       role: row.role,
-    } satisfies ListSummary;
+      } satisfies ListSummary;
   }) ?? [];
 }
 
 export async function createListForUser(userId: string, name = 'My list'): Promise<ListSummary | null> {
   if (!supabase) return null;
+  const accessCode = generateAccessCode();
   const { data, error } = await supabase
     .from('lists')
-    .insert({ name, owner_id: userId })
-    .select('id, name, owner_id, created_at')
+    .insert({ name, owner_id: userId, access_code: accessCode })
+    .select('id, name, owner_id, created_at, access_code')
     .single();
 
   if (error) {
@@ -81,12 +120,12 @@ export async function createListForUser(userId: string, name = 'My list'): Promi
     return null;
   }
 
-  const list = data as ListRecord;
+  const list = data as { id: string; name: string; owner_id: string; access_code: string; created_at: string };
   await supabase
     .from('list_members')
     .upsert({ list_id: list.id, user_id: userId, role: 'owner' }, { onConflict: 'list_id,user_id' });
 
-  return { ...list, role: 'owner' } satisfies ListSummary;
+  return { ...list, role: 'owner', owner: { id: userId, name: null, avatar_url: null } } satisfies ListSummary;
 }
 
 export async function getOrCreateDefaultList(userId: string): Promise<ListSummary | null> {
@@ -101,7 +140,7 @@ export async function fetchListMembers(listId: string): Promise<ListMember[]> {
   if (!supabase) return [];
   const { data, error } = await supabase
     .from('list_members')
-    .select('user_id, role, profiles!inner(id, name, avatar_url)')
+    .select('user_id, role, profiles!inner(id, name, avatar_url, email)')
     .eq('list_id', listId)
     .order('created_at', { ascending: true });
 
@@ -117,7 +156,7 @@ export async function fetchListMembers(listId: string): Promise<ListMember[]> {
       role: row.role,
       name: profile?.name ?? 'Member',
       avatar: profile?.avatar_url ?? undefined,
-      email: null,
+      email: profile?.email ?? null,
     } satisfies ListMember;
   }) ?? [];
 }
@@ -151,4 +190,75 @@ export function subscribeToListMembers(
       console.error('Failed to remove list_members channel', error);
     }
   };
+}
+
+export async function refreshAccessCode(listId: string, userId: string): Promise<string | null> {
+  if (!supabase) return null;
+  const nextCode = generateAccessCode();
+  const { data, error } = await supabase
+    .from('lists')
+    .update({ access_code: nextCode })
+    .eq('id', listId)
+    .eq('owner_id', userId)
+    .select('access_code')
+    .single();
+
+  if (error) {
+    console.error('Failed to refresh access code', error);
+    return null;
+  }
+
+  return (data as { access_code: string }).access_code;
+}
+
+export async function joinListByAccessCode(code: string, userId: string): Promise<ListSummary | null> {
+  if (!supabase) return null;
+  const normalized = normalizeAccessCode(code);
+  if (!normalized) return null;
+
+  const { data: listData, error: listError } = await supabase
+    .from('lists')
+    .select('id, name, owner_id, created_at, access_code, profiles!inner(id, name, avatar_url)')
+    .eq('access_code', normalized)
+    .single();
+
+  if (listError) {
+    console.error('Failed to find list by code', listError);
+    return null;
+  }
+
+  if (!listData) return null;
+
+  const list = listData as ListRecord & {
+    profiles?: {
+      id: string;
+      name: string | null;
+      avatar_url: string | null;
+    } | null;
+  };
+
+  const { error: upsertError } = await supabase
+    .from('list_members')
+    .upsert({ list_id: list.id, user_id: userId, role: 'editor' }, { onConflict: 'list_id,user_id' });
+
+  if (upsertError) {
+    console.error('Failed to join list by code', upsertError);
+    return null;
+  }
+
+  return {
+    id: list.id,
+    name: list.name,
+    owner_id: list.owner_id,
+    created_at: list.created_at,
+    access_code: list.access_code,
+    role: list.owner_id === userId ? 'owner' : 'editor',
+    owner: list.profiles
+      ? {
+          id: list.profiles.id,
+          name: list.profiles.name,
+          avatar_url: list.profiles.avatar_url,
+        }
+      : null,
+  } satisfies ListSummary;
 }
