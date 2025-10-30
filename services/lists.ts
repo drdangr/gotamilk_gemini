@@ -55,11 +55,10 @@ type RawMembershipRow = {
 type RawMemberRow = {
   user_id: string;
   role: 'owner' | 'editor' | 'viewer';
-  profiles?: {
+  profile?: {
     id: string;
     name: string | null;
     avatar_url: string | null;
-    email: string | null;
   } | null;
 };
 
@@ -169,8 +168,7 @@ export async function fetchListMembers(listId: string): Promise<ListMember[]> {
       profile:profiles!list_members_user_id_fkey (
         id,
         name,
-        avatar_url,
-        email
+        avatar_url
       )
     `)
     .eq('list_id', listId)
@@ -186,14 +184,13 @@ export async function fetchListMembers(listId: string): Promise<ListMember[]> {
       id: string;
       name: string | null;
       avatar_url: string | null;
-      email: string | null;
     } | null;
     return {
       id: row.user_id,
       role: row.role,
       name: profile?.name ?? 'Member',
       avatar: profile?.avatar_url ?? undefined,
-      email: profile?.email ?? null,
+      email: null,
     } satisfies ListMember;
   }) ?? [];
 }
