@@ -250,46 +250,16 @@ export async function joinListByAccessCode(code: string, userId: string): Promis
   const normalized = normalizeAccessCode(code);
   if (!normalized) return null;
 
-  const { data: listData, error: listError } = await supabase
-    .from('lists')
-    .select(`
-      id,
-      name,
-      owner_id,
-      created_at,
-      access_code,
-      owner:profiles!lists_owner_id_fkey (
-        id,
-        name,
-        avatar_url
-      )
-    `)
-    .eq('access_code', normalized)
-    .single();
+  const { data, error } = await supabase.rpc('join_list_by_code', { p_access_code: normalized });
 
-  if (listError) {
-    console.error('Failed to find list by code', listError);
+  if (error) {
+    console.error('Failed to join list by code', error);
     return null;
   }
 
-  if (!listData) return null;
+  if (!data) return null;
 
-  const list = listData as ListRecord & {
-    owner?: {
-      id: string;
-      name: string | null;
-      avatar_url: string | null;
-    } | null;
-  };
-
-  const { error: upsertError } = await supabase
-    .from('list_members')
-    .upsert({ list_id: list.id, user_id: userId, role: 'editor' }, { onConflict: 'list_id,user_id' });
-
-  if (upsertError) {
-    console.error('Failed to join list by code', upsertError);
-    return null;
-  }
+  const list = data as ListRecord;
 
   return {
     id: list.id,
@@ -298,12 +268,6 @@ export async function joinListByAccessCode(code: string, userId: string): Promis
     created_at: list.created_at,
     access_code: list.access_code,
     role: list.owner_id === userId ? 'owner' : 'editor',
-    owner: list.owner
-      ? {
-          id: list.owner.id,
-          name: list.owner.name,
-          avatar_url: list.owner.avatar_url,
-        }
-      : null,
+    owner: null,
   } satisfies ListSummary;
 }
