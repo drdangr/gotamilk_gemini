@@ -313,3 +313,32 @@ export async function leaveList(listId: string, userId: string): Promise<boolean
 
   return true;
 }
+
+export async function renameList(listId: string, userId: string, newName: string): Promise<boolean> {
+  if (!supabase) return false;
+  
+  // Проверяем, что пользователь является владельцем списка
+  const { data: list, error: fetchError } = await supabase
+    .from('lists')
+    .select('owner_id')
+    .eq('id', listId)
+    .single();
+  
+  if (fetchError || !list || list.owner_id !== userId) {
+    console.error('Cannot rename list: not owner');
+    return false;
+  }
+
+  const { error } = await supabase
+    .from('lists')
+    .update({ name: newName })
+    .eq('id', listId)
+    .eq('owner_id', userId);
+
+  if (error) {
+    console.error('Failed to rename list', error);
+    return false;
+  }
+
+  return true;
+}

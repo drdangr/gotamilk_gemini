@@ -31,6 +31,7 @@ import {
   type ListSummary,
   createListForUser,
   leaveList as leaveListService,
+  renameList as renameListService,
 } from '../services/lists';
 import {
   fetchListItems,
@@ -267,6 +268,7 @@ interface ShoppingListContextType extends State {
   loadMembersForList: (listId: string) => Promise<ListMember[]>;
   createList: (name: string) => Promise<ListSummary | null>;
   leaveList: (listId: string) => Promise<void>;
+  renameList: (listId: string, newName: string) => Promise<void>;
 }
 
 const ShoppingListContext = createContext<ShoppingListContextType | undefined>(undefined);
@@ -890,6 +892,26 @@ export const ShoppingListProvider: React.FC<{ children: ReactNode }> = ({ childr
     [user?.id, activeListId, lists, refreshLists]
   );
 
+  const renameList = useCallback(
+    async (listId: string, newName: string): Promise<void> => {
+      if (!user?.id) return;
+      const success = await renameListService(listId, user.id, newName);
+      if (success) {
+        // Обновляем списки после переименования
+        await refreshLists();
+        // Обновляем активный список, если он был переименован
+        if (activeListId === listId) {
+          const updated = await refreshLists();
+          const renamedList = updated.find((l) => l.id === listId);
+          if (renamedList) {
+            setActiveList(renamedList);
+          }
+        }
+      }
+    },
+    [user?.id, activeListId, refreshLists]
+  );
+
   return (
     <ShoppingListContext.Provider
       value={{
@@ -920,6 +942,7 @@ export const ShoppingListProvider: React.FC<{ children: ReactNode }> = ({ childr
         loadMembersForList,
         createList,
         leaveList,
+        renameList,
       }}
     >
       {children}
