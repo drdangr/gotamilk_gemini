@@ -67,7 +67,23 @@ export async function fetchUserLists(userId: string): Promise<ListSummary[]> {
   if (!supabase) return [];
   const { data, error } = await supabase
     .from('list_members')
-    .select('list_id, role, created_at, lists!inner(id, name, owner_id, created_at, access_code, profiles(id, name, avatar_url))')
+    .select(`
+      list_id,
+      role,
+      created_at,
+      lists:lists!inner (
+        id,
+        name,
+        owner_id,
+        created_at,
+        access_code,
+        owner:profiles!lists_owner_id_fkey (
+          id,
+          name,
+          avatar_url
+        )
+      )
+    `)
     .eq('user_id', userId)
     .order('created_at', { ascending: true });
 
@@ -77,8 +93,15 @@ export async function fetchUserLists(userId: string): Promise<ListSummary[]> {
   }
 
   return (data as RawMembershipRow[] | null)?.map((row) => {
-    const list = row.lists;
+    const list = row.lists as (RawMembershipRow['lists'] & {
+      owner?: {
+        id: string;
+        name: string | null;
+        avatar_url: string | null;
+      } | null;
+    }) | null;
     if (list) {
+      const ownerProfile = list.owner || null;
       return {
         id: list.id,
         name: list.name,
@@ -86,11 +109,11 @@ export async function fetchUserLists(userId: string): Promise<ListSummary[]> {
         created_at: list.created_at,
         access_code: list.access_code,
         role: row.role,
-        owner: list.profiles
+        owner: ownerProfile
           ? {
-              id: list.profiles.id,
-              name: list.profiles.name,
-              avatar_url: list.profiles.avatar_url,
+              id: ownerProfile.id,
+              name: ownerProfile.name,
+              avatar_url: ownerProfile.avatar_url,
             }
           : null,
       } satisfies ListSummary;
@@ -102,7 +125,7 @@ export async function fetchUserLists(userId: string): Promise<ListSummary[]> {
       created_at: row.created_at || new Date(0).toISOString(),
       access_code: '------',
       role: row.role,
-      } satisfies ListSummary;
+    } satisfies ListSummary;
   }) ?? [];
 }
 
@@ -140,7 +163,16 @@ export async function fetchListMembers(listId: string): Promise<ListMember[]> {
   if (!supabase) return [];
   const { data, error } = await supabase
     .from('list_members')
-    .select('user_id, role, profiles!inner(id, name, avatar_url, email)')
+    .select(`
+      user_id,
+      role,
+      profile:profiles!list_members_user_id_fkey (
+        id,
+        name,
+        avatar_url,
+        email
+      )
+    `)
     .eq('list_id', listId)
     .order('created_at', { ascending: true });
 
@@ -150,7 +182,12 @@ export async function fetchListMembers(listId: string): Promise<ListMember[]> {
   }
 
   return (data as RawMemberRow[] | null)?.map((row) => {
-    const profile = row.profiles;
+    const profile = (row as any).profile as {
+      id: string;
+      name: string | null;
+      avatar_url: string | null;
+      email: string | null;
+    } | null;
     return {
       id: row.user_id,
       role: row.role,
@@ -218,7 +255,18 @@ export async function joinListByAccessCode(code: string, userId: string): Promis
 
   const { data: listData, error: listError } = await supabase
     .from('lists')
-    .select('id, name, owner_id, created_at, access_code, profiles(id, name, avatar_url)')
+    .select(`
+      id,
+      name,
+      owner_id,
+      created_at,
+      access_code,
+      owner:profiles!lists_owner_id_fkey (
+        id,
+        name,
+        avatar_url
+      )
+    `)
     .eq('access_code', normalized)
     .single();
 
@@ -230,7 +278,7 @@ export async function joinListByAccessCode(code: string, userId: string): Promis
   if (!listData) return null;
 
   const list = listData as ListRecord & {
-    profiles?: {
+    owner?: {
       id: string;
       name: string | null;
       avatar_url: string | null;
@@ -253,11 +301,11 @@ export async function joinListByAccessCode(code: string, userId: string): Promis
     created_at: list.created_at,
     access_code: list.access_code,
     role: list.owner_id === userId ? 'owner' : 'editor',
-    owner: list.profiles
+    owner: list.owner
       ? {
-          id: list.profiles.id,
-          name: list.profiles.name,
-          avatar_url: list.profiles.avatar_url,
+          id: list.owner.id,
+          name: list.owner.name,
+          avatar_url: list.owner.avatar_url,
         }
       : null,
   } satisfies ListSummary;

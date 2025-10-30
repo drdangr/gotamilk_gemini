@@ -111,6 +111,7 @@ create policy "list_members: select for members" on public.list_members
   for select using (public.is_list_member(list_members.list_id));
 -- Manage memberships only by list owner
 drop policy if exists "list_members: manage by owner" on public.list_members;
+drop policy if exists "list_members: manage by editors" on public.list_members;
 create policy "list_members: manage by editors" on public.list_members
   for all using (public.can_edit_list(list_members.list_id))
   with check (public.can_edit_list(list_members.list_id));
